@@ -6,8 +6,8 @@ package main
 import (
 	"fmt"
 	"image/color"
-	"ramix/grummi"
 	"regexp"
+	"rummix/grummi"
 	"sort"
 	"strings"
 	"time"
@@ -48,16 +48,32 @@ var statusNames []*canvas.Text
 var statusLabel *widget.Label
 var statusDrawLabel *widget.Label
 var statusTimerLabel *canvas.Text
-var timerStop chan bool
+var timerStop chan bool // Channel to stop the human player's timer
+
+// New variables for the statistics table
+var statsPlayerLabels []*widget.Label
+var statsWinsLabels []*widget.Label
+var statsGamesLabels []*widget.Label
+var statsPointsLabels []*widget.Label
 var statusTiles []*widget.Label
 var gameState grummi.GameState
 var myApp fyne.App
+var isGameLoading bool
+var isTurnProcessing bool
 var background *canvas.Rectangle
 var aiLogEntry *widget.Label
 var humanPool []grummi.Tile // Added for human player's temporary tiles
 var aiLogScroll *container.Scroll
 
 var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+
+// playerStats is a helper struct to hold player statistics for sorting.
+type playerStats struct {
+	Name  string
+	Wins  int
+	Games int
+	Score int
+}
 
 // stripANSI removes ANSI escape sequences (like colors) from a string.
 func stripANSI(str string) string {
@@ -109,7 +125,7 @@ func (l *uiLogger) Log(format string, args ...interface{}) {
 func main() {
 
 	myApp = app.NewWithID(APP_ID)
-	myApp.SetIcon(resourceRamixPng)
+	myApp.SetIcon(resourceRummixPng)
 	myApp.Settings().SetTheme(&compactTheme{Theme: theme.DefaultTheme()})
 
 	myWindow = myApp.NewWindow(APP_NAME)
@@ -156,7 +172,10 @@ func main() {
 	fixedRack := container.NewGridWrap(totalRackSize, playerRack)
 
 	buttons := container.NewVBox(
-		widget.NewButtonWithIcon("Valider", theme.ConfirmIcon(), func() {
+		widget.NewButtonWithIcon("", theme.ConfirmIcon(), func() {
+			if isTurnProcessing {
+				return
+			}
 			if syncUItoGameState() {
 				stopHumanTimer()
 				gameState.ConsecutivePasses = 0 // Valid move, reset passes
@@ -174,7 +193,10 @@ func main() {
 			refreshRack()
 			SetStatus("Tri des tuiles.")
 		}),
-		widget.NewButtonWithIcon("Piocher", theme.ContentAddIcon(), func() {
+		widget.NewButtonWithIcon("", theme.ContentAddIcon(), func() {
+			if isTurnProcessing {
+				return
+			}
 			stopHumanTimer()
 			gameState.DrawTile()
 			refreshRack()
@@ -188,18 +210,28 @@ func main() {
 			gameState.CurrentPlayerID = (gameState.CurrentPlayerID + 1) % len(gameState.Players) // End human turn
 			playNextTurn()
 		}),
-		widget.NewButtonWithIcon("Passer", theme.CancelIcon(), func() { // Pass button
-			stopHumanTimer()
-			SetStatus("Vous avez passé votre tour.")
-			gameState.ConsecutivePasses++ // Explicitly passing
-			gameState.TurnNumber++        // Increment turn number after human passes
-			updateStatusTiles()           // Refresh status display
-			if checkGameEnd() {
-				return // Game ended
+		widget.NewButtonWithIcon("", theme.CancelIcon(), func() { // Rollback button
+			if isTurnProcessing {
+				return
 			}
-			gameState.CurrentPlayerID = (gameState.CurrentPlayerID + 1) % len(gameState.Players)
-			playNextTurn()
+			refreshTable()
+			refreshRack()
+			SetStatus("Mouvement annulé : retour à l'état initial.")
 		}),
+		/*
+			widget.NewButtonWithIcon("Passer", theme.CancelIcon(), func() { // Pass button
+				stopHumanTimer()
+				SetStatus("Vous avez passé votre tour.")
+				gameState.ConsecutivePasses++ // Explicitly passing
+				gameState.TurnNumber++        // Increment turn number after human passes
+				updateStatusTiles()           // Refresh status display
+				if checkGameEnd() {
+					return // Game ended
+				}
+				gameState.CurrentPlayerID = (gameState.CurrentPlayerID + 1) % len(gameState.Players)
+				playNextTurn()
+			}),
+		*/
 	)
 
 	gapBetweenRackAndButtons := canvas.NewRectangle(color.Transparent)
@@ -240,6 +272,22 @@ func main() {
 		statusNames[i].TextStyle = fyne.TextStyle{Bold: true}
 	}
 
+	// Initialize new labels for the statistics table
+	statsPlayerLabels = make([]*widget.Label, 4)
+	statsWinsLabels = make([]*widget.Label, 4)
+	statsGamesLabels = make([]*widget.Label, 4)
+	statsPointsLabels = make([]*widget.Label, 4)
+	for i := range 4 {
+		statsPlayerLabels[i] = widget.NewLabelWithStyle("-", fyne.TextAlignLeading, fyne.TextStyle{})
+		statsWinsLabels[i] = widget.NewLabelWithStyle("-", fyne.TextAlignTrailing, fyne.TextStyle{})
+		statsGamesLabels[i] = widget.NewLabelWithStyle("-", fyne.TextAlignTrailing, fyne.TextStyle{})
+		statsPointsLabels[i] = widget.NewLabelWithStyle("-", fyne.TextAlignTrailing, fyne.TextStyle{})
+	}
+
+	// Old statusStats and statusStatsNames are removed.
+	// var statusStatsNames []*canvas.Text
+	// var statusStats []*widget.Label
+
 	statusTiles = make([]*widget.Label, 4)
 	for i := range 4 {
 		statusTiles[i] = widget.NewLabelWithStyle("-", fyne.TextAlignTrailing, fyne.TextStyle{Bold: true})
@@ -250,15 +298,43 @@ func main() {
 		return container.NewGridWrap(fyne.NewSize(width, 20), obj)
 	}
 
-	// Use FormLayout to align labels and values in two consistent columns
-	statusDetails := container.New(layout.NewFormLayout(),
-		shrink(widget.NewLabel("Tour"), 100), shrink(statusLabel, 40), // Keep "Tour" and its value
-		shrink(widget.NewLabel("Pioche"), 100), shrink(statusDrawLabel, 40), // Keep "Pioche" and its value
-		// Removed "Chrono" label and the timer label from the form layout
-		shrink(statusNames[0], 100), shrink(statusTiles[0], 40), // Player 1
-		shrink(statusNames[1], 100), shrink(statusTiles[1], 40), // Player 2
-		shrink(statusNames[2], 100), shrink(statusTiles[2], 40), // Player 3
-		shrink(statusNames[3], 100), shrink(statusTiles[3], 40), // Player 4
+	gameInfo := container.New(layout.NewFormLayout(),
+		shrink(widget.NewLabel("Tour"), 100), shrink(statusLabel, 40),
+		shrink(widget.NewLabel("Pioche"), 100), shrink(statusDrawLabel, 40),
+	)
+
+	handsGrid := container.New(layout.NewFormLayout())
+	for i := 0; i < 4; i++ {
+		handsGrid.Add(shrink(statusNames[i], 100))
+		handsGrid.Add(shrink(statusTiles[i], 40))
+	}
+
+	// New statsGrid using GridLayoutWithColumns for a table-like display
+	statsGrid := container.New(layout.NewGridLayoutWithColumns(4))
+	// Add headers for the stats table
+	statsGrid.Add(widget.NewLabelWithStyle("Joueur", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
+	statsGrid.Add(widget.NewLabelWithStyle("G", fyne.TextAlignTrailing, fyne.TextStyle{Bold: true})) // Games
+	statsGrid.Add(widget.NewLabelWithStyle("P", fyne.TextAlignTrailing, fyne.TextStyle{Bold: true})) // Wins
+	statsGrid.Add(widget.NewLabelWithStyle("Score", fyne.TextAlignTrailing, fyne.TextStyle{Bold: true}))
+
+	// Add player stat labels to the grid
+	for i := 0; i < 4; i++ {
+		statsGrid.Add(statsPlayerLabels[i])
+		statsGrid.Add(statsWinsLabels[i])
+		statsGrid.Add(statsGamesLabels[i])
+		statsGrid.Add(statsPointsLabels[i])
+	}
+
+	// Dissociate components using sections with headers and separators
+	statusDetails := container.NewVBox( // This container holds the different sections
+		gameInfo,
+		widget.NewSeparator(),
+		container.NewCenter(shrink(widget.NewLabelWithStyle("TUILES", fyne.TextAlignCenter, fyne.TextStyle{Bold: true, Italic: true}), 140)),
+		handsGrid,
+		layout.NewSpacer(),
+		widget.NewSeparator(),
+		container.NewCenter(shrink(widget.NewLabelWithStyle("STATS", fyne.TextAlignCenter, fyne.TextStyle{Bold: true, Italic: true}), 140)),
+		statsGrid,
 	)
 
 	statusTitle := widget.NewLabelWithStyle("STATUS", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
@@ -312,12 +388,8 @@ func updateBackgroundColor() {
 		statusTimerLabel.Color = theme.ForegroundColor()
 		statusTimerLabel.Refresh()
 	}
-	for _, sn := range statusNames {
-		if sn != nil && (sn.Text == "-" || sn.Text == "") {
-			sn.Color = theme.ForegroundColor()
-			sn.Refresh()
-		}
-	}
+	// The new stats labels will automatically pick up the theme's text color.
+	// statusNames are still used for the hands grid, and their color is set in updateStatusTiles.
 	background.Refresh()
 }
 
@@ -594,17 +666,20 @@ func syncUItoGameState() bool {
 		}
 	}
 
-	// 4. Handle the "Opening" rule (30 points minimum for the first play)
+	// 4. Check if any action was taken (tiles played from hand or table modified)
+	handSizeUnchanged := len(newHand) == len(gameState.Players[0].Hand)
+	tableUnchanged := compareTables(gameState.Table, newTable) // New helper function
+
+	if handSizeUnchanged && tableUnchanged {
+		SetStatus("Vous n'avez effectué aucune action valide. Piochez une tuile ou annulez votre mouvement.")
+		return false
+	}
+
+	// 5. Handle the "Opening" rule (30 points minimum for the first play)
 	if !gameState.Players[0].HasPlayedFirst {
 		oldVal := calculateTableValue(gameState.Table)
 		newVal := calculateTableValue(newTable)
 		playedPoints := newVal - oldVal
-
-		// Did the player actually play anything?
-		if len(newHand) == len(gameState.Players[0].Hand) {
-			SetStatus("Vous n'avez posé aucune tuile. Piochez ou passez votre tour.")
-			return false
-		}
 
 		if playedPoints < 30 {
 			SetStatus(fmt.Sprintf("Ouverture refusée : %d/30 points requis.", playedPoints))
@@ -614,10 +689,123 @@ func syncUItoGameState() bool {
 		SetStatus("Félicitations ! Ouverture validée.")
 	}
 
-	// 5. Update the game state if all checks pass
+	// 6. Update the game state if all checks pass
 	gameState.Players[0].Hand = newHand
 	gameState.Table = newTable
 	return true
+}
+
+// compareTables performs a deep comparison of two game tables,
+// considering combinations and tiles within them.
+// It sorts combinations and tiles to ensure that rearrangements don't
+// falsely indicate a change.
+func compareTables(table1, table2 [][]grummi.Tile) bool {
+	if len(table1) != len(table2) {
+		return false
+	}
+
+	// Create sortable copies of the tables
+	sortedTable1 := make([][]grummi.Tile, len(table1))
+	sortedTable2 := make([][]grummi.Tile, len(table2))
+
+	for i, combo := range table1 {
+		c := make([]grummi.Tile, len(combo))
+		copy(c, combo)
+		grummi.SortTiles(c) // Sort tiles within each combination
+		sortedTable1[i] = c
+	}
+	for i, combo := range table2 {
+		c := make([]grummi.Tile, len(combo))
+		copy(c, combo)
+		grummi.SortTiles(c) // Sort tiles within each combination
+		sortedTable2[i] = c
+	}
+
+	// Sort the combinations themselves (e.g., by the first tile's value and color)
+	sort.Slice(sortedTable1, func(i, j int) bool {
+		return compareCombinationsForSorting(sortedTable1[i], sortedTable1[j]) < 0
+	})
+	sort.Slice(sortedTable2, func(i, j int) bool {
+		return compareCombinationsForSorting(sortedTable2[i], sortedTable2[j]) < 0
+	})
+
+	// Now compare the sorted tables element by element
+	for i := range sortedTable1 {
+		if !areCombinationsEqual(sortedTable1[i], sortedTable2[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// areCombinationsEqual checks if two combinations are identical (after sorting their tiles).
+func areCombinationsEqual(combo1, combo2 []grummi.Tile) bool {
+	if len(combo1) != len(combo2) {
+		return false
+	}
+	for i := range combo1 {
+		if combo1[i] != combo2[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// compareCombinationsForSorting compares two combinations for sorting purposes.
+// Returns -1 if combo1 < combo2, 0 if equal, 1 if combo1 > combo2.
+func compareCombinationsForSorting(combo1, combo2 []grummi.Tile) int {
+	if len(combo1) == 0 && len(combo2) == 0 {
+		return 0
+	}
+	if len(combo1) == 0 {
+		return -1
+	}
+	if len(combo2) == 0 {
+		return 1
+	}
+
+	// Compare by first tile
+	if combo1[0].Color != combo2[0].Color {
+		if combo1[0].Color < combo2[0].Color {
+			return -1
+		}
+		return 1
+	}
+	if combo1[0].Value != combo2[0].Value {
+		if combo1[0].Value < combo2[0].Value {
+			return -1
+		}
+		return 1
+	}
+
+	// If first tiles are equal, compare by length
+	if len(combo1) != len(combo2) {
+		if len(combo1) < len(combo2) {
+			return -1
+		}
+		return 1
+	}
+
+	// If all else equal, compare tile by tile
+	for i := range combo1 {
+		if combo1[i] != combo2[i] {
+			// This should ideally not happen if tiles are unique and sorted,
+			// but as a fallback for full comparison.
+			if combo1[i].Color != combo2[i].Color {
+				if combo1[i].Color < combo2[i].Color {
+					return -1
+				}
+				return 1
+			}
+			if combo1[i].Value != combo2[i].Value {
+				if combo1[i].Value < combo2[i].Value {
+					return -1
+				}
+				return 1
+			}
+		}
+	}
+	return 0
 }
 
 // getTileAtCell is a helper to retrieve the grummi.Tile pointer from a specific cell in a grid.
@@ -833,7 +1021,7 @@ func updateStatusTiles() {
 	for i := 0; i < 4; i++ {
 		if i < len(gameState.Players) {
 			p := gameState.Players[i]
-			statusNames[i].Text = p.Name
+			statusNames[i].Text = p.Name // For the "TUILES" section
 			if p.HasPlayedFirst {
 				statusNames[i].Color = ColorRummyGreen
 			} else {
@@ -847,6 +1035,45 @@ func updateStatusTiles() {
 			statusNames[i].Refresh()
 			statusTiles[i].SetText("-")
 		}
+	}
+
+	// Collect stats for sorting and display in the "STATS" section
+	var currentStats []playerStats
+	for _, p := range gameState.Players {
+		wins := myApp.Preferences().Int(fmt.Sprintf("Stats_%s_Wins", p.Name))
+		games := myApp.Preferences().Int(fmt.Sprintf("Stats_%s_Games", p.Name))
+		score := myApp.Preferences().Int(fmt.Sprintf("Stats_%s_Score", p.Name))
+		currentStats = append(currentStats, playerStats{
+			Name:  p.Name,
+			Wins:  wins,
+			Games: games,
+			Score: score,
+		})
+	}
+
+	// Sort by score (descending)
+	sort.Slice(currentStats, func(i, j int) bool {
+		return currentStats[i].Score > currentStats[j].Score
+	})
+
+	// Update the stats grid labels with sorted data
+	for i := 0; i < 4; i++ {
+		if i < len(currentStats) {
+			statsPlayerLabels[i].SetText(currentStats[i].Name)
+			statsWinsLabels[i].SetText(fmt.Sprintf("%d", currentStats[i].Wins))
+			statsGamesLabels[i].SetText(fmt.Sprintf("%d", currentStats[i].Games))
+			statsPointsLabels[i].SetText(fmt.Sprintf("%d", currentStats[i].Score))
+		} else {
+			// Clear unused rows
+			statsPlayerLabels[i].SetText("-")
+			statsWinsLabels[i].SetText("-")
+			statsGamesLabels[i].SetText("-")
+			statsPointsLabels[i].SetText("-")
+		}
+		statsPlayerLabels[i].Refresh()
+		statsWinsLabels[i].Refresh()
+		statsGamesLabels[i].Refresh()
+		statsPointsLabels[i].Refresh()
 	}
 }
 
@@ -917,18 +1144,37 @@ func showNewGameDialog(win fyne.Window, startCallback func(playerName string, ai
 // onNewGame()
 // ****************************************************************************
 func onNewGame(name string, ais int) {
+	if isGameLoading {
+		return
+	}
+	isGameLoading = true
 	stopHumanTimer()
-	gameLogger := &uiLogger{}
-	gameState = grummi.InitializeGame(ais+1, gameLogger) // Pass the UI logger to the game state
-	gameState.Players[0].Name = name
 
-	gameState.CurrentPlayerID = gameState.DetermineFirstPlayer() // This now logs the message
-	gameState.TurnNumber = 1                                     // Reset turn number for new game
-	refreshRack()
-	refreshTable() // Refresh table after new game initialization
+	go func() {
+		defer func() { isGameLoading = false }()
 
-	// Start the turn sequence after a new game is initialized
-	playNextTurn()
+		gameLogger := &uiLogger{}
+		newGameState := grummi.InitializeGame(ais+1, gameLogger)
+		newGameState.Players[0].Name = name
+
+		// Swap global state immediately so logs/refreshes use new data
+		fyne.Do(func() {
+			gameState = newGameState
+			gameState.TurnNumber = 1
+			refreshRack()
+			refreshTable()
+		})
+
+		// DetermineFirstPlayer contains sleeps/logs; now safe as global state is swapped
+		firstPlayerID := gameState.DetermineFirstPlayer()
+		gameState.CurrentPlayerID = firstPlayerID
+
+		fyne.Do(func() {
+			updateStatusTiles()
+		})
+
+		playNextTurn()
+	}()
 }
 
 // ****************************************************************************
@@ -937,7 +1183,14 @@ func onNewGame(name string, ais int) {
 // playNextTurn manages the game flow, handling AI turns automatically
 // and setting up for the human player's turn.
 func playNextTurn() {
+	if isTurnProcessing {
+		return
+	}
+	isTurnProcessing = true
+
 	go func() {
+		defer func() { isTurnProcessing = false }()
+
 		for gameState.Players[gameState.CurrentPlayerID].IsAI { // Loop through AI turns until it's the human player's turn
 			currentPlayer := &gameState.Players[gameState.CurrentPlayerID]
 
@@ -967,6 +1220,7 @@ func playNextTurn() {
 		fyne.Do(func() {
 			SetStatus(fmt.Sprintf("C'est à votre tour, %s !", gameState.Players[0].Name))
 			startHumanTimer()
+			flashTimer()
 		})
 	}()
 }
@@ -993,20 +1247,54 @@ func appendAIMessage(msg string) {
 func checkGameEnd() bool {
 	currentPlayer := &gameState.Players[gameState.CurrentPlayerID]
 
-	// 1. Check for a winner (empty hand)
-	if len(currentPlayer.Hand) == 0 {
-		fyne.Do(func() {
-			SetStatus(fmt.Sprintf("🏆 FÉLICITATIONS ! %s a vidé sa main et gagne la partie !", currentPlayer.Name))
-			showGameOverDialog(fmt.Sprintf("FÉLICITATIONS ! %s a vidé sa main et gagne la partie !", currentPlayer.Name), currentPlayer.ID)
-		})
-		return true
-	}
+	isWin := len(currentPlayer.Hand) == 0
+	isStalemate := gameState.ConsecutivePasses >= len(gameState.Players) && len(gameState.Remaining) == 0
 
-	// 2. Check for stalemate
-	if gameState.ConsecutivePasses >= len(gameState.Players) && len(gameState.Remaining) == 0 {
+	if isWin || isStalemate {
+		winnerID := -1
+		if isWin {
+			winnerID = currentPlayer.ID
+		}
+
+		// Calculate points to save in statistics
+		playerPoints := make(map[int]int)
+		totalOpponentPoints := 0
+		for _, p := range gameState.Players {
+			handPoints := grummi.CalculateHandPoints(p.Hand)
+			if p.ID == winnerID {
+				playerPoints[p.ID] = 0
+			} else {
+				playerPoints[p.ID] = -handPoints
+				totalOpponentPoints += handPoints
+			}
+		}
+		if winnerID != -1 {
+			playerPoints[winnerID] = totalOpponentPoints
+		}
+
+		// Save statistics to Preferences
+		prefs := myApp.Preferences()
+		for _, p := range gameState.Players {
+			gKey := fmt.Sprintf("Stats_%s_Games", p.Name)
+			wKey := fmt.Sprintf("Stats_%s_Wins", p.Name)
+			sKey := fmt.Sprintf("Stats_%s_Score", p.Name)
+
+			prefs.SetInt(gKey, prefs.Int(gKey)+1)
+			if p.ID == winnerID {
+				prefs.SetInt(wKey, prefs.Int(wKey)+1)
+			}
+			prefs.SetInt(sKey, prefs.Int(sKey)+playerPoints[p.ID])
+		}
+
 		fyne.Do(func() {
-			SetStatus("🤝 MATCH NUL ! La pioche est vide et plus personne ne peut jouer.")
-			showGameOverDialog("MATCH NUL ! La pioche est vide et plus personne ne peut jouer.", -1) // -1 for stalemate
+			if isWin {
+				SetStatus(fmt.Sprintf("🏆 FÉLICITATIONS ! %s a vidé sa main et gagne la partie !", currentPlayer.Name))
+				showGameOverDialog(fmt.Sprintf("FÉLICITATIONS ! %s a vidé sa main et gagne la partie !", currentPlayer.Name), currentPlayer.ID)
+			} else {
+				SetStatus("🤝 MATCH NUL ! La pioche est vide et plus personne ne peut jouer.")
+				showGameOverDialog("MATCH NUL ! La pioche est vide et plus personne ne peut jouer.", -1)
+			}
+			updateStatusTiles() // Refresh to show new stats immediately
 		})
 		return true
 	}
@@ -1108,4 +1396,29 @@ func stopHumanTimer() {
 			statusTimerLabel.Refresh()
 		})
 	}
+}
+
+// flashTimer creates a visual color animation on the timer to alert the player.
+func flashTimer() {
+	if statusTimerLabel == nil {
+		return
+	}
+
+	// Manual flash to ensure compatibility with all Fyne v2 versions
+	go func() {
+		originalColor := theme.ForegroundColor()
+		// Flash 3 times
+		for i := 0; i < 3; i++ {
+			fyne.Do(func() {
+				statusTimerLabel.Color = ColorRummyRed
+				statusTimerLabel.Refresh()
+			})
+			time.Sleep(300 * time.Millisecond)
+			fyne.Do(func() {
+				statusTimerLabel.Color = originalColor
+				statusTimerLabel.Refresh()
+			})
+			time.Sleep(300 * time.Millisecond)
+		}
+	}()
 }

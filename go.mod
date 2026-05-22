@@ -1,4 +1,4 @@
-module ramix
+module rummix
 
 go 1.26.1
 

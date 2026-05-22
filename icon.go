@@ -10,8 +10,8 @@ import (
 )
 
 //go:embed rummix.png
-var resourceRamixPngData []byte
-var resourceRamixPng = &fyne.StaticResource{
+var resourceRummixPngData []byte
+var resourceRummixPng = &fyne.StaticResource{
 	StaticName:    "rummix.png",
-	StaticContent: resourceRamixPngData,
+	StaticContent: resourceRummixPngData,
 }
