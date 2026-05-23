@@ -67,6 +67,11 @@ var aiLogScroll *container.Scroll
 
 var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 
+// resourcePocWav is a placeholder. You must bundle a sound file named poc.wav
+// using: fyne bundle poc.wav >> icon.go
+// This will create the resourcePocWav variable automatically.
+// var resourcePocWav fyne.Resource
+
 // playerStats is a helper struct to hold player statistics for sorting.
 type playerStats struct {
 	Name  string
@@ -81,27 +86,51 @@ func stripANSI(str string) string {
 
 	// Replace emojis with text equivalents to avoid rendering issues on some platforms
 	replacer := strings.NewReplacer(
-		"😁", "[Joker]",
-		"🔴", "(R)",
-		"🔵", "(B)",
-		"🟢", "(G)",
-		"🟠", "(O)",
-		"🤖", "[AI]",
-		"🎲", "Roll:",
-		"🧩", "Table",
-		"📥", "Pool",
-		"🖐️", "Hand",
-		"✨", "*",
-		"⭐", "!",
-		"🎉", "!",
-		"🏆", "WIN",
-		"📊", "Stats",
-		"👤", "P",
-		"🃏", "Deck",
-		"✔", "OK",
-		"✖", "X",
-		"►", ">",
+		"😁", "",
+		"🔴", ":RED",
+		"🔵", ":BLUE",
+		"🟢", ":GREEN",
+		"🟠", ":ORANGE",
+		"🤖", "",
+		"🎲", "",
+		"🧩", "",
+		"📥", "",
+		"🖐️", "",
+		"✨", "",
+		"⭐", "",
+		"🎉", "",
+		"🏆", "",
+		"📊", "",
+		"👤", "",
+		"🃏", "",
+		"✔", "",
+		"✖", "",
+		"►", "",
 	)
+	/*
+		replacer := strings.NewReplacer(
+			"😁", "[Joker]",
+			"🔴", "(R)",
+			"🔵", "(B)",
+			"🟢", "(G)",
+			"🟠", "(O)",
+			"🤖", "[AI]",
+			"🎲", "Roll:",
+			"🧩", "Table",
+			"📥", "Pool",
+			"🖐️", "Hand",
+			"✨", "*",
+			"⭐", "!",
+			"🎉", "!",
+			"🏆", "WIN",
+			"📊", "Stats",
+			"👤", "P",
+			"🃏", "Deck",
+			"✔", "OK",
+			"✖", "X",
+			"►", ">",
+		)
+	*/
 	return replacer.Replace(str)
 }
 
@@ -118,6 +147,21 @@ func (l *uiLogger) Log(format string, args ...interface{}) {
 	})
 	time.Sleep(600 * time.Millisecond) // Short delay to let the user see the move
 }
+
+// playPoc plays the "poc" sound effect using the Fyne audio API.
+/*
+func playPoc() {
+	if resourcePocWav == nil {
+		return
+	}
+	s, err := audio.NewStream(resourcePocWav)
+	if err == nil {
+		s.Play()
+	} else {
+		fmt.Printf("Audio error: %v\n", err)
+	}
+}
+*/
 
 // ----------------------------------------------------------------------------
 // main()
@@ -136,6 +180,12 @@ func main() {
 
 	boardCellSize = fyne.NewSize(40, 52)
 	rackCellSize = fyne.NewSize(30, 39)
+
+	// Initialize the overlay and background containers early. refreshRack and refreshTable
+	// are called during startup and create DragTiles that require these
+	// references to be non-nil for rendering phantom tiles during drag operations.
+	overlay = container.NewWithoutLayout()
+	background = canvas.NewRectangle(color.Transparent)
 
 	gameState = grummi.InitializeGame(2, &uiLogger{})
 	humanPool = []grummi.Tile{} // Initialize the pool for the human player
@@ -191,16 +241,37 @@ func main() {
 		widget.NewButtonWithIcon("", theme.ViewRefreshIcon(), func() {
 			grummi.SortTiles(gameState.Players[0].Hand)
 			refreshRack()
-			SetStatus("Tri des tuiles.")
+			SetStatus(grummi.T("status_sorting"))
 		}),
 		widget.NewButtonWithIcon("", theme.ContentAddIcon(), func() {
 			if isTurnProcessing {
 				return
 			}
+			if len(gameState.Remaining) == 0 {
+				return
+			}
+
 			stopHumanTimer()
+			drawnTile := gameState.Remaining[0]
 			gameState.DrawTile()
 			refreshRack()
-			SetStatus(fmt.Sprintf("Pioché ! Il reste %d tuiles.", len(gameState.Remaining)))
+
+			// Find where the new tile was placed in the rack to animate it
+			targetIdx := -1
+			for i := 0; i < 80; i++ {
+				if t := getTileAtCell(playerRack, i); t != nil && *t == drawnTile {
+					targetIdx = i
+					break
+				}
+			}
+
+			SetStatus(grummi.T("status_drawn", len(gameState.Remaining)))
+			if targetIdx != -1 {
+				cellStack := playerRack.Objects[targetIdx].(*fyne.Container).Objects[0].(*fyne.Container)
+				cellStack.Objects[1].Hide() // Hide initially to let animation play
+				animateTileToRack(drawnTile, cellStack, targetIdx)
+			}
+
 			gameState.ConsecutivePasses++ // Drawing counts as a pass for stalemate
 			gameState.TurnNumber++        // Increment turn number after human draws
 			updateStatusTiles()           // Refresh status display
@@ -299,8 +370,8 @@ func main() {
 	}
 
 	gameInfo := container.New(layout.NewFormLayout(),
-		shrink(widget.NewLabel("Tour"), 100), shrink(statusLabel, 40),
-		shrink(widget.NewLabel("Pioche"), 100), shrink(statusDrawLabel, 40),
+		shrink(widget.NewLabel(grummi.T("label_turn")), 100), shrink(statusLabel, 40),
+		shrink(widget.NewLabel(grummi.T("label_draw_pile")), 100), shrink(statusDrawLabel, 40),
 	)
 
 	handsGrid := container.New(layout.NewFormLayout())
@@ -312,32 +383,32 @@ func main() {
 	// New statsGrid using GridLayoutWithColumns for a table-like display
 	statsGrid := container.New(layout.NewGridLayoutWithColumns(4))
 	// Add headers for the stats table
-	statsGrid.Add(widget.NewLabelWithStyle("Joueur", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
-	statsGrid.Add(widget.NewLabelWithStyle("G", fyne.TextAlignTrailing, fyne.TextStyle{Bold: true})) // Games
-	statsGrid.Add(widget.NewLabelWithStyle("P", fyne.TextAlignTrailing, fyne.TextStyle{Bold: true})) // Wins
-	statsGrid.Add(widget.NewLabelWithStyle("Score", fyne.TextAlignTrailing, fyne.TextStyle{Bold: true}))
+	statsGrid.Add(shrink(widget.NewLabelWithStyle(grummi.T("column_player"), fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), 60))
+	statsGrid.Add(shrink(widget.NewLabelWithStyle(grummi.T("column_games"), fyne.TextAlignTrailing, fyne.TextStyle{Bold: true}), 25))
+	statsGrid.Add(shrink(widget.NewLabelWithStyle(grummi.T("column_wins"), fyne.TextAlignTrailing, fyne.TextStyle{Bold: true}), 25))
+	statsGrid.Add(shrink(widget.NewLabelWithStyle(grummi.T("column_score"), fyne.TextAlignTrailing, fyne.TextStyle{Bold: true}), 30))
 
 	// Add player stat labels to the grid
 	for i := 0; i < 4; i++ {
-		statsGrid.Add(statsPlayerLabels[i])
-		statsGrid.Add(statsWinsLabels[i])
-		statsGrid.Add(statsGamesLabels[i])
-		statsGrid.Add(statsPointsLabels[i])
+		statsGrid.Add(shrink(statsPlayerLabels[i], 60))
+		statsGrid.Add(shrink(statsWinsLabels[i], 25))
+		statsGrid.Add(shrink(statsGamesLabels[i], 25))
+		statsGrid.Add(shrink(statsPointsLabels[i], 30))
 	}
 
 	// Dissociate components using sections with headers and separators
 	statusDetails := container.NewVBox( // This container holds the different sections
 		gameInfo,
 		widget.NewSeparator(),
-		container.NewCenter(shrink(widget.NewLabelWithStyle("TUILES", fyne.TextAlignCenter, fyne.TextStyle{Bold: true, Italic: true}), 140)),
+		container.NewCenter(shrink(widget.NewLabelWithStyle(grummi.T("label_tiles_section"), fyne.TextAlignCenter, fyne.TextStyle{Bold: true, Italic: true}), 140)),
 		handsGrid,
 		layout.NewSpacer(),
 		widget.NewSeparator(),
-		container.NewCenter(shrink(widget.NewLabelWithStyle("STATS", fyne.TextAlignCenter, fyne.TextStyle{Bold: true, Italic: true}), 140)),
+		container.NewCenter(shrink(widget.NewLabelWithStyle(grummi.T("label_stats_section"), fyne.TextAlignCenter, fyne.TextStyle{Bold: true, Italic: true}), 140)),
 		statsGrid,
 	)
 
-	statusTitle := widget.NewLabelWithStyle("STATUS", fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
+	statusTitle := widget.NewLabelWithStyle(grummi.T("section_status"), fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
 	statusArea := container.NewBorder(
 		container.NewVBox(
 			container.NewCenter(shrink(statusTitle, 140)),
@@ -351,10 +422,6 @@ func main() {
 	refreshRack()
 	readPreferences()
 	refreshTable() // Display the initial (empty) table
-
-	// The final layout
-	overlay = container.NewWithoutLayout()
-	background = canvas.NewRectangle(color.Transparent)
 
 	// Group the table and status area together in an HBox to remove the gap between them,
 	// then center the combined assembly in the main window area.
@@ -490,7 +557,6 @@ func refreshTable() {
 		key := fmt.Sprintf("%d-%d", tile.Value, tile.Color)
 		if count := existingTiles[key]; count > 0 {
 			existingTiles[key]--
-			// Tile was already on the table, it just snapped to its (new) position
 		} else {
 			// New tile! Animate it in from the player's side
 			wrapper := gameTable.Objects[idx].(*fyne.Container)
@@ -608,6 +674,7 @@ func animateTileIn(tile grummi.Tile, targetCell *fyne.Container, playerID int, i
 	phantom.Move(startPos)
 
 	// 3. Create and start animation
+	// playPoc() // Play sound once at the start of the movement
 	anim := canvas.NewPositionAnimation(startPos, finalPos, 500*time.Millisecond, func(p fyne.Position) {
 		phantom.Move(p)
 		phantom.Refresh()
@@ -615,6 +682,45 @@ func animateTileIn(tile grummi.Tile, targetCell *fyne.Container, playerID int, i
 	anim.Start()
 
 	// Cleanup after animation completes (500ms)
+	time.AfterFunc(500*time.Millisecond, func() {
+		fyne.Do(func() {
+			overlay.Remove(phantom)
+			if len(targetCell.Objects) > 1 {
+				targetCell.Objects[1].Show()
+				targetCell.Refresh()
+			}
+		})
+	})
+}
+
+// animateTileToRack handles the visual movement of a drawn tile from the right window border to its rack slot.
+func animateTileToRack(tile grummi.Tile, targetCell *fyne.Container, idx int) {
+	phantom := container.NewStack(renderTile(&tile))
+	phantom.Resize(rackCellSize)
+	overlay.Add(phantom)
+
+	winSize := myWindow.Content().Size()
+
+	// Coordinate calculations for the rack based on the main layout:
+	// rackOffsetX = aiLogScroll(250) + gap(10)
+	rackOffsetX := float32(260)
+	// rackOffsetY estimate = WindowHeight - statusMsg (~30) - rackHeight (4*39=156)
+	rackOffsetY := winSize.Height - 186
+
+	finalPos := fyne.NewPos(rackOffsetX+float32(idx%20)*rackCellSize.Width, rackOffsetY+float32(idx/20)*rackCellSize.Height)
+	startPos := fyne.NewPos(winSize.Width, finalPos.Y) // Start from the right edge
+
+	phantom.Move(startPos)
+
+	// Create and start the position animation
+	// playPoc() // Play sound once when drawing
+	anim := canvas.NewPositionAnimation(startPos, finalPos, 500*time.Millisecond, func(p fyne.Position) {
+		phantom.Move(p)
+		phantom.Refresh()
+	})
+	anim.Start()
+
+	// Cleanup: remove phantom and show the real tile in the rack
 	time.AfterFunc(500*time.Millisecond, func() {
 		fyne.Do(func() {
 			overlay.Remove(phantom)
@@ -661,7 +767,7 @@ func syncUItoGameState() bool {
 	// Check if all combinations on the table are valid
 	for _, combo := range newTable {
 		if !grummi.IsValidCombination(combo) {
-			SetStatus("Mouvement invalide : vérifiez vos combinaisons sur la table !")
+			SetStatus(grummi.T("err_invalid_move"))
 			return false
 		}
 	}
@@ -671,7 +777,7 @@ func syncUItoGameState() bool {
 	tableUnchanged := compareTables(gameState.Table, newTable) // New helper function
 
 	if handSizeUnchanged && tableUnchanged {
-		SetStatus("Vous n'avez effectué aucune action valide. Piochez une tuile ou annulez votre mouvement.")
+		SetStatus(grummi.T("err_no_action"))
 		return false
 	}
 
@@ -682,11 +788,11 @@ func syncUItoGameState() bool {
 		playedPoints := newVal - oldVal
 
 		if playedPoints < 30 {
-			SetStatus(fmt.Sprintf("Ouverture refusée : %d/30 points requis.", playedPoints))
+			SetStatus(grummi.T("err_opening_refused", playedPoints))
 			return false
 		}
 		gameState.Players[0].HasPlayedFirst = true
-		SetStatus("Félicitations ! Ouverture validée.")
+		SetStatus(grummi.T("status_opening_ok"))
 	}
 
 	// 6. Update the game state if all checks pass
@@ -917,46 +1023,62 @@ func getTileValueInRun(combo []grummi.Tile, index int) int {
 // ----------------------------------------------------------------------------
 func setMenu() {
 	newItem := fyne.NewMenuItem(grummi.T("menu_new_game"), func() { showNewGameDialog(myWindow, onNewGame) })
-	saveItem := fyne.NewMenuItem(grummi.T("menu_save"), func() { /* Save logic */ })
 	quitItem := fyne.NewMenuItem(grummi.T("menu_quit"), func() { confirmExit() })
-	appearanceMenu := fyne.NewMenu(grummi.T("menu_display"),
-		fyne.NewMenuItem(grummi.T("menu_theme_dark"), func() {
-			SetStatus("Application du thème sombre")
-			myApp.Settings().SetTheme(&compactTheme{Theme: theme.DarkTheme()})
-			myApp.Preferences().SetString("AppTheme", "dark")
-			updateBackgroundColor()
-			myWindow.Content().Refresh()
-		}),
-		fyne.NewMenuItem(grummi.T("menu_theme_light"), func() {
-			SetStatus("Application du thème clair")
-			myApp.Settings().SetTheme(&compactTheme{Theme: theme.LightTheme()})
-			myApp.Preferences().SetString("AppTheme", "light")
-			updateBackgroundColor()
-			myWindow.Content().Refresh()
-		}),
-	)
 
-	languageMenu := fyne.NewMenu(grummi.T("menu_language"),
-		fyne.NewMenuItem("English", func() {
-			grummi.SetLanguage("en")
-			myApp.Preferences().SetString("AppLanguage", "en")
-			SetStatus(grummi.T("status_lang_changed", "English"))
-			setMenu() // Refresh menu labels
-		}),
-		fyne.NewMenuItem("Français", func() {
-			grummi.SetLanguage("fr")
-			myApp.Preferences().SetString("AppLanguage", "fr")
-			SetStatus(grummi.T("status_lang_changed", "Français"))
-			setMenu() // Refresh menu labels
-		}),
-	)
+	currentTheme := myApp.Preferences().StringWithFallback("AppTheme", "light")
+	currentLang := myApp.Preferences().StringWithFallback("AppLanguage", "fr")
+
+	// Settings Sub-menu: Appearance
+	darkThemeItem := fyne.NewMenuItem(grummi.T("menu_theme_dark"), func() {
+		SetStatus(grummi.T("status_theme_dark"))
+		myApp.Settings().SetTheme(&compactTheme{Theme: theme.DarkTheme()})
+		myApp.Preferences().SetString("AppTheme", "dark")
+		updateBackgroundColor()
+		setMenu()
+		myWindow.Content().Refresh()
+	})
+	darkThemeItem.Checked = currentTheme == "dark"
+
+	lightThemeItem := fyne.NewMenuItem(grummi.T("menu_theme_light"), func() {
+		SetStatus(grummi.T("status_theme_light"))
+		myApp.Settings().SetTheme(&compactTheme{Theme: theme.LightTheme()})
+		myApp.Preferences().SetString("AppTheme", "light")
+		updateBackgroundColor()
+		setMenu()
+		myWindow.Content().Refresh()
+	})
+	lightThemeItem.Checked = currentTheme == "light"
+
+	displayItem := fyne.NewMenuItem(grummi.T("menu_display"), nil)
+	displayItem.ChildMenu = fyne.NewMenu("", darkThemeItem, lightThemeItem)
+
+	// Settings Sub-menu: Language
+	enItem := fyne.NewMenuItem("English", func() {
+		grummi.SetLanguage("en")
+		myApp.Preferences().SetString("AppLanguage", "en")
+		SetStatus(grummi.T("status_lang_changed", "English"))
+		setMenu()
+	})
+	enItem.Checked = currentLang == "en"
+
+	frItem := fyne.NewMenuItem("Français", func() {
+		grummi.SetLanguage("fr")
+		myApp.Preferences().SetString("AppLanguage", "fr")
+		SetStatus(grummi.T("status_lang_changed", "Français"))
+		setMenu()
+	})
+	frItem.Checked = currentLang == "fr"
+
+	languageItem := fyne.NewMenuItem(grummi.T("menu_language"), nil)
+	languageItem.ChildMenu = fyne.NewMenu("", enItem, frItem)
+
+	settingsMenu := fyne.NewMenu(grummi.T("menu_settings"), displayItem, languageItem)
 
 	// Add it to our menu bar
 	mainMenu := fyne.NewMainMenu(
-		fyne.NewMenu(grummi.T("menu_file"), newItem, saveItem, quitItem),
-		appearanceMenu, // Our new menu
-		languageMenu,
-		fyne.NewMenu("Aide", fyne.NewMenuItem("À propos", func() { showAbout(myWindow) })),
+		fyne.NewMenu(grummi.T("menu_file"), newItem, quitItem),
+		settingsMenu,
+		fyne.NewMenu(grummi.T("menu_help"), fyne.NewMenuItem(grummi.T("menu_about"), func() { showAbout(myWindow) })),
 	)
 	myWindow.SetMainMenu(mainMenu)
 }
@@ -965,8 +1087,8 @@ func setMenu() {
 // confirmExit()
 // ----------------------------------------------------------------------------
 func confirmExit() {
-	SetStatus("Confirmation pour quitter")
-	d := dialog.NewConfirm("Confirmation", "Quitter la partie en cours ?", func(confirm bool) {
+	SetStatus(grummi.T("dialog_confirm_title"))
+	d := dialog.NewConfirm(grummi.T("dialog_confirm_title"), grummi.T("dialog_confirm_quit"), func(confirm bool) {
 		if confirm {
 			myApp.Quit()
 		}
@@ -978,20 +1100,20 @@ func confirmExit() {
 // showAbout()
 // ----------------------------------------------------------------------------
 func showAbout(win fyne.Window) {
-	SetStatus("À propos")
+	SetStatus(grummi.T("menu_about"))
 	info := APP_NAME + "\n" +
-		"Version " + getFullVersion() + "\n\n" +
-		APP_DESCRIPTION + "\n\n" +
+		grummi.T("label_version") + " " + getFullVersion() + "\n\n" +
+		grummi.T("app_description") + "\n\n" +
 		APP_URL + "\n\n" +
 		APP_COPYRIGHT
-	dialog.ShowInformation("À propos", info, win)
+	dialog.ShowInformation(grummi.T("menu_about"), info, win)
 }
 
 // ----------------------------------------------------------------------------
 // readPreferences()
 // ----------------------------------------------------------------------------
 func readPreferences() {
-	SetStatus("Lecture des préférences")
+	SetStatus(grummi.T("status_reading_prefs"))
 	langPref := myApp.Preferences().StringWithFallback("AppLanguage", "fr")
 	grummi.SetLanguage(langPref)
 	themePref := myApp.Preferences().StringWithFallback("AppTheme", "light")
@@ -1092,7 +1214,7 @@ func SetStatus(msg string) {
 func showNewGameDialog(win fyne.Window, startCallback func(playerName string, aiCount int)) {
 	// 1. Champ pour le nom du joueur
 	nameEntry := widget.NewEntry()
-	nameEntry.SetPlaceHolder("Entrez votre nom...")
+	nameEntry.SetPlaceHolder(grummi.T("placeholder_name"))
 
 	// Optionnel: On peut recharger le dernier nom utilisé depuis les préférences
 	nameEntry.SetText(fyne.CurrentApp().Preferences().StringWithFallback("PlayerName", "Humain"))
@@ -1134,6 +1256,9 @@ func showNewGameDialog(win fyne.Window, startCallback func(playerName string, ai
 
 				// On lance le callback avec les données récupérées
 				startCallback(nomJoueur, aiCount)
+			} else {
+				// If the user cancels the dialog, quit the application
+				myApp.Quit()
 			}
 		},
 		win,
@@ -1218,7 +1343,7 @@ func playNextTurn() {
 
 		// It's now the human player's turn
 		fyne.Do(func() {
-			SetStatus(fmt.Sprintf("C'est à votre tour, %s !", gameState.Players[0].Name))
+			SetStatus(grummi.T("status_human_turn", gameState.Players[0].Name))
 			startHumanTimer()
 			flashTimer()
 		})
@@ -1288,11 +1413,11 @@ func checkGameEnd() bool {
 
 		fyne.Do(func() {
 			if isWin {
-				SetStatus(fmt.Sprintf("🏆 FÉLICITATIONS ! %s a vidé sa main et gagne la partie !", currentPlayer.Name))
-				showGameOverDialog(fmt.Sprintf("FÉLICITATIONS ! %s a vidé sa main et gagne la partie !", currentPlayer.Name), currentPlayer.ID)
+				SetStatus(grummi.T("msg_win", currentPlayer.Name))
+				showGameOverDialog(grummi.T("msg_win", currentPlayer.Name), currentPlayer.ID)
 			} else {
-				SetStatus("🤝 MATCH NUL ! La pioche est vide et plus personne ne peut jouer.")
-				showGameOverDialog("MATCH NUL ! La pioche est vide et plus personne ne peut jouer.", -1)
+				SetStatus(grummi.T("msg_stalemate"))
+				showGameOverDialog(grummi.T("msg_stalemate"), -1)
 			}
 			updateStatusTiles() // Refresh to show new stats immediately
 		})
@@ -1307,7 +1432,7 @@ func checkGameEnd() bool {
 // showGameOverDialog displays a dialog with game over information.
 func showGameOverDialog(message string, winnerID int) {
 	// Prepare final scores and hands for display in the dialog
-	scoreDetails := "Scores:\n"
+	scoreDetails := grummi.T("label_scores") + "\n"
 	playerPoints := make(map[int]int)
 	totalOpponentPoints := 0
 
@@ -1329,7 +1454,7 @@ func showGameOverDialog(message string, winnerID int) {
 		scoreDetails += fmt.Sprintf("  %s: %d points\n", p.Name, playerPoints[p.ID])
 	}
 
-	handDetails := "\nFinal Hands:\n"
+	handDetails := "\n" + grummi.T("label_final_hands") + "\n"
 	for _, p := range gameState.Players {
 		grummi.SortTiles(p.Hand)
 		handDetails += fmt.Sprintf("  %s: ", p.Name)

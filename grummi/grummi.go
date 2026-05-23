@@ -87,14 +87,14 @@ var nTurn = 1
 func main() {
 	args := os.Args
 	if len(args) != 2 {
-		fmt.Printf("Usage: %s <nombre_de_joueurs>\n", args[0])
+		fmt.Printf(T("usage_players", args[0]) + "\n")
 		return
 	}
 
 	numPlayers := 0
 	_, err := fmt.Sscanf(args[1], "%d", &numPlayers)
 	if err != nil || numPlayers < 2 || numPlayers > 4 {
-		fmt.Println("Le nombre de joueurs doit être entre 2 et 4.")
+		fmt.Println(T("err_player_count"))
 		return
 	}
 	game := InitializeGame(numPlayers, &StdOutLogger{})
@@ -111,7 +111,7 @@ func main() {
 
 		// Check if the player won
 		if len(player.Hand) == 0 {
-			fmt.Printf("\n🏆 FÉLICITATIONS ! %s a vidé sa main et gagne la partie !\n", player.Name)
+			fmt.Printf("\n" + T("msg_win", player.Name) + "\n")
 			game.PrintFinalScores(player.ID)
 			game.PrintFinalHands()
 			break
@@ -120,7 +120,7 @@ func main() {
 		// Check for stalemate (no one can play and draw pile is empty)
 		if game.ConsecutivePasses >= len(game.Players) && len(game.Remaining) == 0 {
 			game.PrintFinalScores(-1) // -1 indicates no specific winner (stalemate)
-			fmt.Println("\n🤝 MATCH NUL ! La pioche est vide et plus personne ne peut jouer.")
+			fmt.Println("\n" + T("msg_stalemate"))
 			game.PrintFinalHands()
 			break
 		}
@@ -304,7 +304,7 @@ func dealTiles(tiles []Tile, numPlayers int) ([]Player, []Tile) {
 // ----------------------------------------------------------------------------
 func InitializeGame(numPlayers int, logger Logger) GameState {
 	if numPlayers < 2 || numPlayers > 4 {
-		panic("Le nombre de joueurs doit être entre 2 et 4.")
+		panic(T("err_player_count"))
 	}
 
 	allTiles := initializeAllTiles()
@@ -426,7 +426,7 @@ func FindBestHandLayout(hand []Tile, hoardJokers bool) ([][]Tile, []Tile) {
 // ----------------------------------------------------------------------------
 func (state *GameState) DrawTile() {
 	if len(state.Remaining) == 0 {
-		state.Logger.Log("La pioche est vide !")
+		state.Logger.Log(T("err_draw_pile_empty"))
 		return
 	}
 
@@ -438,7 +438,7 @@ func (state *GameState) DrawTile() {
 	currentPlayer := &state.Players[state.CurrentPlayerID]
 	currentPlayer.Hand = append(currentPlayer.Hand, tile)
 
-	state.Logger.Log("Joueur %d pioche une tuile.", currentPlayer.ID)
+	state.Logger.Log(T("status_drawn", len(state.Remaining)))
 }
 
 // ----------------------------------------------------------------------------
@@ -447,7 +447,7 @@ func (state *GameState) DrawTile() {
 func PrintTable(table [][]Tile) {
 	fmt.Println(strings.Repeat("═", 80))
 	if len(table) == 0 {
-		fmt.Println("    [ Vide ]")
+		fmt.Println("    " + T("label_empty"))
 	} else {
 		for i, combo := range table {
 			fmt.Printf(" [%2d] : ", i+1)
@@ -465,7 +465,7 @@ func PrintTable(table [][]Tile) {
 // ----------------------------------------------------------------------------
 func (state *GameState) PrintFinalHands() {
 	fmt.Println("\n" + strings.Repeat("═", 80))
-	fmt.Println("📊 ÉTAT FINAL DES MAINS :")
+	fmt.Println(T("label_final_hands_section"))
 	for _, p := range state.Players {
 		SortTiles(p.Hand)
 		fmt.Printf(" 👤 %-10s : ", p.Name)
@@ -568,7 +568,7 @@ func (state *GameState) HumanTurn(p *Player) {
 				pool = append(pool, p.Hand[idx])
 				p.Hand = append(p.Hand[:idx], p.Hand[idx+1:]...)
 			} else {
-				fmt.Println("❌ Index invalide dans votre main.")
+				fmt.Println(T("err_invalid_index_hand"))
 				time.Sleep(1 * time.Second)
 			}
 
@@ -582,7 +582,7 @@ func (state *GameState) HumanTurn(p *Player) {
 			validIndices := true
 			for _, i := range indices {
 				if i < 0 || i >= len(pool) {
-					fmt.Printf("❌ Index invalide dans la réserve : %d\n", i)
+					fmt.Printf(T("err_invalid_index_pool", i) + "\n")
 					validIndices = false
 					break
 				}
@@ -593,9 +593,9 @@ func (state *GameState) HumanTurn(p *Player) {
 				SortTiles(newCombo)
 				state.Table = append(state.Table, newCombo)
 				pool = removeTilesFromPool(pool, indices)
-				fmt.Println("✅ Nouvelle combinaison posée !")
+				fmt.Println(T("msg_combo_placed"))
 			} else if validIndices {
-				fmt.Println("❌ Cette combinaison n'est pas valide.")
+				fmt.Println(T("err_invalid_combo"))
 			}
 			time.Sleep(1 * time.Second)
 
@@ -607,14 +607,14 @@ func (state *GameState) HumanTurn(p *Player) {
 			// Then perform the mandatory draw
 			state.DrawTile()
 			state.ConsecutivePasses++
-			fmt.Println("Tour annulé, vous avez pioché une tuile.")
+			fmt.Println(T("msg_turn_cancelled_draw"))
 			nTurn++
 			return
 
 		case "m":
 			idx := getIndex()
 			if idx < 0 || idx >= len(pool) {
-				fmt.Println("❌ Index invalide.")
+				fmt.Println(T("err_invalid_index"))
 				continue
 			}
 
@@ -633,17 +633,17 @@ func (state *GameState) HumanTurn(p *Player) {
 			if isGenuine {
 				p.Hand = append(p.Hand, tuileAChecker)
 				pool = removeTilesFromPool(pool, []int{idx})
-				fmt.Println("✅ Tuile remise en main.")
+				fmt.Println(T("msg_tile_back_to_hand"))
 			} else {
-				fmt.Println("❌ Interdit ! Cette tuile provient de la table, vous ne pouvez pas la prendre dans votre main.")
+				fmt.Println(T("err_forbidden_table_to_hand"))
 			}
 
 		case "t":
 			if len(state.Table) == 0 {
-				fmt.Println("❌ La table est vide.")
+				fmt.Println(T("err_table_empty"))
 				continue
 			}
-			fmt.Printf("Quelle combinaison voulez-vous ramasser (1 à %d) ? ", len(state.Table))
+			fmt.Printf(T("prompt_pick_combo", len(state.Table)))
 			var idx int
 			fmt.Scanln(&idx)
 			idx -= 1 // Ajustement pour l'index 0
@@ -658,22 +658,22 @@ func (state *GameState) HumanTurn(p *Player) {
 				// 3. Remove them from the table
 				state.Table = append(state.Table[:idx], state.Table[idx+1:]...)
 
-				fmt.Println("✅ Combinaison envoyée dans la réserve.")
+				fmt.Println(T("msg_combo_to_pool"))
 			} else {
-				fmt.Println("❌ Index invalide.")
+				fmt.Println(T("err_invalid_index"))
 			}
 
 		case "s":
 			// 1. Check for orphan tiles
 			if len(pool) > 0 {
-				fmt.Printf("❌ Action impossible : il reste %d tuile(s) dans la réserve !\n", len(pool))
-				fmt.Println("Vous devez toutes les replacer sur la table.")
+				fmt.Printf(T("err_action_impossible_pool", len(pool)) + "\n")
+				fmt.Println(T("prompt_replace_all"))
 				continue // Return to the beginning of the loop so the player continues
 			}
 
 			// 1bis. Check: the player must have placed at least one tile from their hand
 			if len(p.Hand) == len(backupHand) {
-				fmt.Println("❌ Vous n'avez posé aucune tuile de votre main. Tour annulé, vous piochez une tuile.")
+				fmt.Println(T("err_no_tile_played_draw"))
 				state.Table = backupTable
 				p.Hand = backupHand
 				state.DrawTile()
@@ -685,8 +685,8 @@ func (state *GameState) HumanTurn(p *Player) {
 			// 2. Score calculation for the first play (if necessary)
 			if !p.HasPlayedFirst {
 				if pointsFromHand < 30 {
-					fmt.Printf("❌ Premier coup invalide : vous avez posé %d points (minimum 30).\n", pointsFromHand)
-					fmt.Println("Souhaitez-vous [c]ontinuer ou [a]nnuler et piocher ?")
+					fmt.Printf(T("err_opening_refused_cli", pointsFromHand) + "\n")
+					fmt.Println(T("prompt_continue_or_cancel"))
 
 					var choice string
 					fmt.Scanln(&choice)
@@ -704,17 +704,17 @@ func (state *GameState) HumanTurn(p *Player) {
 
 				// If we reach this point, the score is >= 30
 				p.HasPlayedFirst = true
-				fmt.Println("🎉 Félicitations ! Vous avez validé votre ouverture.")
+				fmt.Println(T("status_opening_ok"))
 			}
 
 			// 3. Final validation
 			state.ConsecutivePasses = 0
-			fmt.Println("✅ Tour validé. Fin du tour.")
+			fmt.Println(T("msg_turn_validated"))
 			state.TurnNumber++
 			return // Exit HumanTurn, state.Table already contains the new modifications
 
 		case "q":
-			fmt.Print("Êtes-vous sûr de vouloir quitter ? (o/n) : ")
+			fmt.Print(T("prompt_confirm_quit"))
 			var confirm string
 			fmt.Scanln(&confirm)
 			if strings.ToLower(confirm) == "o" {
@@ -735,7 +735,7 @@ func (state *GameState) DetermineFirstPlayer() int {
 	// Draw a number between 0 and number of players - 1
 	firstPlayerIndex := rand.Intn(len(state.Players))
 
-	state.Logger.Log("🎲 Tirage au sort... C'est %s qui commence !", state.Players[firstPlayerIndex].Name)
+	state.Logger.Log(T("status_starting_player", state.Players[firstPlayerIndex].Name))
 	// Leave a short pause for suspense
 	time.Sleep(2 * time.Second)
 
@@ -855,14 +855,14 @@ func (state *GameState) IATurn(currentPlayer *Player) {
 			if calculatePoints(bestLayout) >= 30 {
 				canPlayNew = true
 				currentPlayer.HasPlayedFirst = true
-				state.Logger.Log("⭐ %s : Ouverture validée (%d pts) !", currentPlayer.Name, calculatePoints(bestLayout))
+				state.Logger.Log(T("ai_opening_valid", currentPlayer.Name, calculatePoints(bestLayout)))
 			} else {
 				aggLayout, aggRemaining := FindBestHandLayout(currentPlayer.Hand, false)
 				if calculatePoints(aggLayout) >= 30 {
 					bestLayout, remainingHand = aggLayout, aggRemaining
 					canPlayNew = true
 					currentPlayer.HasPlayedFirst = true
-					state.Logger.Log("⭐ %s : Ouverture validée avec Joker (%d pts) !", currentPlayer.Name, calculatePoints(aggLayout))
+					state.Logger.Log(T("ai_opening_joker", currentPlayer.Name, calculatePoints(aggLayout)))
 				}
 			}
 		} else if len(bestLayout) > 0 {
@@ -895,7 +895,7 @@ func (state *GameState) IATurn(currentPlayer *Player) {
 
 	if len(currentPlayer.Hand) < initialHandCount || currentJokerCount > initialJokerCount {
 		state.ConsecutivePasses = 0
-		state.Logger.Log("🤖 %s a joué son tour.", currentPlayer.Name)
+		state.Logger.Log(T("ai_played", currentPlayer.Name))
 	} else {
 		// Rollback if no progress was made (ensures AI doesn't keep "stolen" jokers without playing)
 		state.Table = backupTable
@@ -936,7 +936,7 @@ func (state *GameState) TryAppendToTable(p *Player, allowJokers bool) bool {
 					p.Hand = append(p.Hand[:i], p.Hand[i+1:]...)
 					playedAtLeastOne = true
 					modified = true
-					state.Logger.Log("🤖 %s ajoute %s à une combinaison sur la table.", p.Name, FormatTile(tile))
+					state.Logger.Log(T("ai_append", p.Name, FormatTile(tile)))
 					break
 				}
 			}
@@ -980,7 +980,7 @@ func (state *GameState) TrySplitAndInsert(p *Player) bool {
 						state.Table = append(state.Table, test1, part2)
 						// Remove tile from hand
 						p.Hand = append(p.Hand[:hIdx], p.Hand[hIdx+1:]...) // Remove the tile from the hand
-						state.Logger.Log("🤖 %s scinde une combinaison pour insérer %s.", p.Name, FormatTile(handTile))
+						state.Logger.Log(T("ai_split", p.Name, FormatTile(handTile)))
 						return true
 					}
 				}
@@ -995,7 +995,7 @@ func (state *GameState) TrySplitAndInsert(p *Player) bool {
 						state.Table = append(state.Table, part1, test2)
 						// Remove tile from hand
 						p.Hand = append(p.Hand[:hIdx], p.Hand[hIdx+1:]...) // Remove the tile from the hand
-						state.Logger.Log("🤖 %s scinde une combinaison pour insérer %s.", p.Name, FormatTile(handTile))
+						state.Logger.Log(T("ai_split", p.Name, FormatTile(handTile)))
 						return true
 					}
 				}
@@ -1042,7 +1042,7 @@ func (state *GameState) LiberateJokers(p *Player) bool {
 				SortTiles(newCombo)
 				state.Table[i] = newCombo
 				p.Hand[hIdx] = Tile{Value: 0, Color: -1}
-				state.Logger.Log("🤖 %s remplace un Joker sur la table par %s.", p.Name, FormatTile(handTile))
+				state.Logger.Log(T("ai_replace_joker", p.Name, FormatTile(handTile)))
 				return true // Joker replaced, return
 			}
 		}
@@ -1055,7 +1055,7 @@ func (state *GameState) LiberateJokers(p *Player) bool {
 			if IsValidCombination(newCombo) {
 				state.Table[i] = newCombo
 				p.Hand = append(p.Hand, Tile{Value: 0, Color: -1})
-				state.Logger.Log("🤖 %s libère un Joker (combinaison de %d tuiles).", p.Name, len(combo))
+				state.Logger.Log(T("ai_liberate", p.Name, len(combo)))
 				return true
 			}
 		}
@@ -1168,7 +1168,7 @@ func (state *GameState) TryStealFromTable(p *Player) bool {
 							state.Table = append(state.Table, testCombo)
 							t1, t2 := p.Hand[h1], p.Hand[h2]
 							p.Hand = removeTiles(p.Hand, Combination{t1, t2})
-							state.Logger.Log("🤖 %s utilise %s de la table avec deux tuiles de sa main.", p.Name, FormatTile(tileToSteal))
+							state.Logger.Log(T("ai_steal", p.Name, FormatTile(tileToSteal)))
 							return true
 						}
 					}
@@ -1359,7 +1359,7 @@ func PrintTilePool(pool []Tile) {
 // ----------------------------------------------------------------------------
 func getIndex() int {
 	var idx int
-	fmt.Print("Entrez l'index : ")
+	fmt.Print(T("prompt_enter_index"))
 	fmt.Scanln(&idx)
 	return idx
 }
@@ -1368,7 +1368,7 @@ func getIndex() int {
 // getMultipleIndices()
 // ----------------------------------------------------------------------------
 func getMultipleIndices() []int {
-	fmt.Print("Entrez les index séparés par des virgules (ex: 0,1,2) : ")
+	fmt.Print(T("prompt_enter_indices"))
 	var input string
 	fmt.Scanln(&input)
 
@@ -1407,10 +1407,10 @@ func (state *GameState) PrintUserMenu(p *Player, pool []Tile, points int) {
 	fmt.Println("                   \\__, |_|   \\__,_|_| |_| |_|_| |_| |_|_|")
 	fmt.Printf("                   |___/        v%s © JPL 2026\n", getFullVersion())
 	fmt.Println("\n" + strings.Repeat("═", 80))
-	// Add the draw pile to the banner
-	fmt.Printf(" 👤 JOUEUR : %-8s | 🃏 PIOCHE : %-3d | 🏆 OUVERTURE : %s | 🃏 TOUR : %d \n",
-		p.Name, remainingTiles, formatStatus(p.HasPlayedFirst), nTurn)
-	fmt.Print(" 👥 TUILES : ") // This line was duplicated, fixed.
+	fmt.Printf(" 👤 %s : %-8s | 🃏 %s : %-3d | 🏆 %s : %s | 🃏 %s : %d \n",
+		T("label_player_cli"), p.Name, T("label_draw_pile_short"), remainingTiles,
+		T("label_opening_cli"), formatStatus(p.HasPlayedFirst), T("label_turn_cli"), nTurn)
+	fmt.Print(" 👥 " + T("label_tiles_section") + " : ")
 	for _, other := range state.Players {
 		if other.HasPlayedFirst {
 			fmt.Printf("%s[✔ %-7s: %2d]%s  ", ColorGreen, other.Name, len(other.Hand), ColorReset)
@@ -1421,37 +1421,37 @@ func (state *GameState) PrintUserMenu(p *Player, pool []Tile, points int) {
 	fmt.Println("\n" + strings.Repeat("─", 80))
 
 	// 1. Table State (What is validated)
-	fmt.Println(" 🧩 TABLE ACTUELLE :")
+	fmt.Println(" 🧩 " + T("label_current_table"))
 	if len(state.Table) == 0 {
-		fmt.Println("    [ Vide ]")
+		fmt.Println("    " + T("label_empty"))
 	} else {
 		PrintTable(state.Table)
 	}
 
 	// 2. The Reserve (Bulk to process)
-	fmt.Println("\n 📥 RÉSERVE (Tuiles à replacer) :")
+	fmt.Println("\n 📥 " + T("label_pool_section"))
 	PrintTilePool(pool)
 
 	// 3. The Player's Hand
-	fmt.Println("\n 🖐️  VOTRE MAIN :")
+	fmt.Println("\n 🖐️  " + T("label_your_hand_section"))
 	p.PrintHandWithIndices()
 
 	// 4. Action menu
 	fmt.Println("\n" + strings.Repeat("─", 80))
 	if !p.HasPlayedFirst {
-		fmt.Printf(" ✨ Points de ce tour : %d / 30\n", points)
+		fmt.Printf(T("label_points_opening", points) + "\n")
 	} else {
-		fmt.Printf(" ✨ Points de ce tour : %d\n", points)
+		fmt.Printf(T("label_points_turn", points) + "\n")
 	}
-	fmt.Println("  [N] Nouveau combo        (Réserve -> Table)")
-	fmt.Println("  [H] Jouer de la main     (Main    -> Réserve)")
-	fmt.Println("  [T] Ramasser de la table (Table   -> Réserve)")
-	fmt.Println("  [M] Reprendre en main    (Réserve -> Main)")
-	fmt.Println("  [S] Valider le tour")
-	fmt.Println("  [P] Piocher et/ou annuler le tour")
-	fmt.Println("  [Q] Quitter le jeu")
+	fmt.Println(T("menu_new_combo"))
+	fmt.Println(T("menu_play_from_hand"))
+	fmt.Println(T("menu_pick_from_table"))
+	fmt.Println(T("menu_take_back_hand"))
+	fmt.Println(T("menu_validate_turn"))
+	fmt.Println(T("menu_draw_cancel"))
+	fmt.Println(T("menu_quit_cli"))
 	fmt.Println(strings.Repeat("═", 80))
-	fmt.Print("👉 Votre choix : ")
+	fmt.Print(T("prompt_choice"))
 }
 
 // ----------------------------------------------------------------------------
@@ -1459,9 +1459,9 @@ func (state *GameState) PrintUserMenu(p *Player, pool []Tile, points int) {
 // ----------------------------------------------------------------------------
 func formatStatus(b bool) string {
 	if b {
-		return "✅ OUI"
+		return T("status_yes")
 	}
-	return "❌ NON"
+	return T("status_no")
 }
 
 // ----------------------------------------------------------------------------
@@ -1469,7 +1469,7 @@ func formatStatus(b bool) string {
 // ----------------------------------------------------------------------------
 func (state *GameState) PrintFinalScores(winnerID int) {
 	fmt.Println("\n" + strings.Repeat("═", 80))
-	fmt.Println("📊 RÉSULTATS FINAUX :")
+	fmt.Println(T("label_final_scores_section"))
 
 	playerPoints := make(map[int]int)
 	totalOpponentPoints := 0

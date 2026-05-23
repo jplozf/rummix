@@ -11,12 +11,11 @@ var GitVersion = "dev" // GitVersion is the number of git commits and the git ha
 // CONSTANTS
 // ----------------------------------------------------------------------------
 const (
-	MAJOR           = "0" // Major version, incremented for significant changes
-	APP_NAME        = "Rummix"
-	APP_ID          = "fr.ozf.rummix"
-	APP_URL         = "https://github.com/jplozf/rummix"
-	APP_COPYRIGHT   = "© 2026 JPL. Tous droits réservés."
-	APP_DESCRIPTION = "Un jeu développé avec Go et Fyne."
+	MAJOR         = "0" // Major version, incremented for significant changes
+	APP_NAME      = "Rummix"
+	APP_ID        = "fr.ozf.rummix"
+	APP_URL       = "https://github.com/jplozf/rummix"
+	APP_COPYRIGHT = "© JPL 2026. Tous droits réservés."
 )
 
 // ----------------------------------------------------------------------------

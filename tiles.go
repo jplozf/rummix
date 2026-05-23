@@ -328,6 +328,7 @@ func handleDrop(absPos fyne.Position, src *DragTile) bool {
 
 		// 3. Place the source tile at the destination
 		setTileAt(target.grid, target.index, src.tile.Value, src.tile.Color)
+		// playPoc()
 
 		// 4. If the destination was occupied, move the old tile to the source (Swap)
 		if targetTile != nil {
