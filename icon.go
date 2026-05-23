@@ -9,9 +9,9 @@ import (
 	"fyne.io/fyne/v2"
 )
 
-//go:embed rummix.png
+//go:embed assets/rummix.png
 var resourceRummixPngData []byte
 var resourceRummixPng = &fyne.StaticResource{
-	StaticName:    "rummix.png",
+	StaticName:    "assets/rummix.png",
 	StaticContent: resourceRummixPngData,
 }

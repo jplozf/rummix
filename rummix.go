@@ -178,6 +178,8 @@ func main() {
 		confirmExit()
 	})
 
+	InitAudio()
+
 	boardCellSize = fyne.NewSize(40, 52)
 	rackCellSize = fyne.NewSize(30, 39)
 
@@ -227,6 +229,7 @@ func main() {
 				return
 			}
 			if syncUItoGameState() {
+				PlayOkSound() // Play OK sound for valid move
 				stopHumanTimer()
 				gameState.ConsecutivePasses = 0 // Valid move, reset passes
 				gameState.TurnNumber++          // Increment turn number after a valid human move
@@ -287,6 +290,7 @@ func main() {
 			}
 			refreshTable()
 			refreshRack()
+			PlayNogoodSound() // Play Nogood sound for invalid move
 			SetStatus("Mouvement annulé : retour à l'état initial.")
 		}),
 		/*
@@ -425,7 +429,7 @@ func main() {
 
 	// Group the table and status area together in an HBox to remove the gap between them,
 	// then center the combined assembly in the main window area.
-	tableAndStatus := container.NewCenter(container.NewHBox(fixedTable, statusArea))
+	tableAndStatus := container.NewCenter(container.NewHBox(fixedTable, gapBetweenRackAndButtons, statusArea))
 	mainInterface := container.NewBorder(nil, centeredBottom, nil, nil, tableAndStatus)
 
 	windowContent := container.NewStack(background, mainInterface)
@@ -675,6 +679,7 @@ func animateTileIn(tile grummi.Tile, targetCell *fyne.Container, playerID int, i
 
 	// 3. Create and start animation
 	// playPoc() // Play sound once at the start of the movement
+	PlayTileSound()
 	anim := canvas.NewPositionAnimation(startPos, finalPos, 500*time.Millisecond, func(p fyne.Position) {
 		phantom.Move(p)
 		phantom.Refresh()
@@ -713,7 +718,7 @@ func animateTileToRack(tile grummi.Tile, targetCell *fyne.Container, idx int) {
 	phantom.Move(startPos)
 
 	// Create and start the position animation
-	// playPoc() // Play sound once when drawing
+	PlayTileSound() // Play sound once when drawing
 	anim := canvas.NewPositionAnimation(startPos, finalPos, 500*time.Millisecond, func(p fyne.Position) {
 		phantom.Move(p)
 		phantom.Refresh()
@@ -768,6 +773,7 @@ func syncUItoGameState() bool {
 	for _, combo := range newTable {
 		if !grummi.IsValidCombination(combo) {
 			SetStatus(grummi.T("err_invalid_move"))
+			PlayNogoodSound() // Play Nogood sound for invalid move
 			return false
 		}
 	}
@@ -778,6 +784,7 @@ func syncUItoGameState() bool {
 
 	if handSizeUnchanged && tableUnchanged {
 		SetStatus(grummi.T("err_no_action"))
+		PlayNogoodSound() // Play Nogood sound for invalid move
 		return false
 	}
 
@@ -788,6 +795,7 @@ func syncUItoGameState() bool {
 		playedPoints := newVal - oldVal
 
 		if playedPoints < 30 {
+			PlayNogoodSound() // Play Nogood sound for invalid move
 			SetStatus(grummi.T("err_opening_refused", playedPoints))
 			return false
 		}
@@ -1411,6 +1419,8 @@ func checkGameEnd() bool {
 			prefs.SetInt(sKey, prefs.Int(sKey)+playerPoints[p.ID])
 		}
 
+		PlayWinnerSound() // Play a win sound effect
+
 		fyne.Do(func() {
 			if isWin {
 				SetStatus(grummi.T("msg_win", currentPlayer.Name))
@@ -1482,6 +1492,8 @@ func startHumanTimer() {
 	timerStop = make(chan bool)
 	localStop := timerStop
 	startTime := time.Now()
+
+	PlayBeepSound() // Play a beep at the start of the timer
 
 	go func() {
 		ticker := time.NewTicker(time.Second)
