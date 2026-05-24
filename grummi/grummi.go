@@ -37,14 +37,15 @@ type Player struct {
 type Combination []Tile
 
 type GameState struct {
-	Players           []Player
-	Remaining         []Tile
-	CurrentPlayerID   int
-	Table             [][]Tile
-	Hand              []Tile
-	TurnNumber        int
-	ConsecutivePasses int
-	Logger            Logger // Logger for UI messages
+	Players               []Player
+	Remaining             []Tile
+	CurrentPlayerID       int
+	Table                 [][]Tile
+	Hand                  []Tile
+	TurnNumber            int
+	ConsecutivePasses     int
+	Logger                Logger // Logger for UI messages
+	RequiredOpeningPoints int
 }
 
 // StdOutLogger is a default logger that prints to the console
@@ -312,12 +313,13 @@ func InitializeGame(numPlayers int, logger Logger) GameState {
 	players, remaining := dealTiles(shuffledTiles, numPlayers)
 
 	return GameState{
-		Players:         players,
-		Remaining:       remaining,
-		Table:           [][]Tile{},
-		CurrentPlayerID: 0,
-		TurnNumber:      1,
-		Logger:          logger,
+		Players:               players,
+		Remaining:             remaining,
+		Table:                 [][]Tile{},
+		CurrentPlayerID:       0,
+		TurnNumber:            1,
+		Logger:                logger,
+		RequiredOpeningPoints: 30, // Default value
 	}
 }
 
@@ -684,8 +686,8 @@ func (state *GameState) HumanTurn(p *Player) {
 
 			// 2. Score calculation for the first play (if necessary)
 			if !p.HasPlayedFirst {
-				if pointsFromHand < 30 {
-					fmt.Printf(T("err_opening_refused_cli", pointsFromHand) + "\n")
+				if pointsFromHand < state.RequiredOpeningPoints {
+					fmt.Printf(T("err_opening_refused_cli", pointsFromHand, state.RequiredOpeningPoints) + "\n")
 					fmt.Println(T("prompt_continue_or_cancel"))
 
 					var choice string
@@ -702,7 +704,7 @@ func (state *GameState) HumanTurn(p *Player) {
 					continue // Return to the turn so they add tiles
 				}
 
-				// If we reach this point, the score is >= 30
+				// If we reach this point, the score is >= 25,30 or 50 (depending on the rules), we validate the opening
 				p.HasPlayedFirst = true
 				fmt.Println(T("status_opening_ok"))
 			}
@@ -852,13 +854,13 @@ func (state *GameState) IATurn(currentPlayer *Player) {
 
 		canPlayNew := false
 		if !currentPlayer.HasPlayedFirst {
-			if calculatePoints(bestLayout) >= 30 {
+			if calculatePoints(bestLayout) >= state.RequiredOpeningPoints {
 				canPlayNew = true
 				currentPlayer.HasPlayedFirst = true
 				state.Logger.Log(T("ai_opening_valid", currentPlayer.Name, calculatePoints(bestLayout)))
 			} else {
 				aggLayout, aggRemaining := FindBestHandLayout(currentPlayer.Hand, false)
-				if calculatePoints(aggLayout) >= 30 {
+				if calculatePoints(aggLayout) >= state.RequiredOpeningPoints {
 					bestLayout, remainingHand = aggLayout, aggRemaining
 					canPlayNew = true
 					currentPlayer.HasPlayedFirst = true
@@ -1439,7 +1441,7 @@ func (state *GameState) PrintUserMenu(p *Player, pool []Tile, points int) {
 	// 4. Action menu
 	fmt.Println("\n" + strings.Repeat("─", 80))
 	if !p.HasPlayedFirst {
-		fmt.Printf(T("label_points_opening", points) + "\n")
+		fmt.Printf(T("label_points_opening", points, state.RequiredOpeningPoints) + "\n")
 	} else {
 		fmt.Printf(T("label_points_turn", points) + "\n")
 	}

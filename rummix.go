@@ -34,8 +34,16 @@ import (
 // VARS
 // ----------------------------------------------------------------------------
 var (
-	boardCellSize fyne.Size
-	rackCellSize  fyne.Size
+	boardCellSize     fyne.Size
+	rackCellSize      fyne.Size
+	isPaused          bool
+	humanTimerElapsed time.Duration
+	confirmBtn        *widget.Button
+	sortBtn           *widget.Button
+	drawBtn           *widget.Button
+	rollbackBtn       *widget.Button
+	pauseBtn          *widget.Button
+	turnLimitMinutes  int
 )
 var boardSlots []fyne.CanvasObject
 var rackSlots []fyne.CanvasObject
@@ -48,6 +56,8 @@ var statusNames []*canvas.Text
 var statusLabel *widget.Label
 var statusDrawLabel *widget.Label
 var statusTimerLabel *canvas.Text
+var statusLimitLabel *canvas.Text
+var statusOpeningPointsLabel *canvas.Text
 var timerStop chan bool // Channel to stop the human player's timer
 
 // New variables for the statistics table
@@ -223,76 +233,51 @@ func main() {
 
 	fixedRack := container.NewGridWrap(totalRackSize, playerRack)
 
-	buttons := container.NewVBox(
-		widget.NewButtonWithIcon("", theme.ConfirmIcon(), func() {
-			if isTurnProcessing {
-				return
-			}
-			if syncUItoGameState() {
-				PlayOkSound() // Play OK sound for valid move
-				stopHumanTimer()
-				gameState.ConsecutivePasses = 0 // Valid move, reset passes
-				gameState.TurnNumber++          // Increment turn number after a valid human move
-				updateStatusTiles()             // Refresh status display
-				if checkGameEnd() {
-					return // Game ended
-				}
-				gameState.CurrentPlayerID = (gameState.CurrentPlayerID + 1) % len(gameState.Players)
-				playNextTurn()
-			}
-		}),
-		widget.NewButtonWithIcon("", theme.ViewRefreshIcon(), func() {
-			grummi.SortTiles(gameState.Players[0].Hand)
-			refreshRack()
-			SetStatus(grummi.T("status_sorting"))
-		}),
-		widget.NewButtonWithIcon("", theme.ContentAddIcon(), func() {
-			if isTurnProcessing {
-				return
-			}
-			if len(gameState.Remaining) == 0 {
-				return
-			}
-
+	confirmBtn = widget.NewButtonWithIcon("", theme.ConfirmIcon(), func() {
+		if isTurnProcessing {
+			return
+		}
+		if syncUItoGameState() {
+			PlayOkSound() // Play OK sound for valid move
 			stopHumanTimer()
-			drawnTile := gameState.Remaining[0]
-			gameState.DrawTile()
-			refreshRack()
-
-			// Find where the new tile was placed in the rack to animate it
-			targetIdx := -1
-			for i := 0; i < 80; i++ {
-				if t := getTileAtCell(playerRack, i); t != nil && *t == drawnTile {
-					targetIdx = i
-					break
-				}
-			}
-
-			SetStatus(grummi.T("status_drawn", len(gameState.Remaining)))
-			if targetIdx != -1 {
-				cellStack := playerRack.Objects[targetIdx].(*fyne.Container).Objects[0].(*fyne.Container)
-				cellStack.Objects[1].Hide() // Hide initially to let animation play
-				animateTileToRack(drawnTile, cellStack, targetIdx)
-			}
-
-			gameState.ConsecutivePasses++ // Drawing counts as a pass for stalemate
-			gameState.TurnNumber++        // Increment turn number after human draws
-			updateStatusTiles()           // Refresh status display
+			humanTimerElapsed = 0
+			gameState.ConsecutivePasses = 0 // Valid move, reset passes
+			gameState.TurnNumber++          // Increment turn number after a valid human move
+			updateStatusTiles()             // Refresh status display
 			if checkGameEnd() {
 				return // Game ended
 			}
-			gameState.CurrentPlayerID = (gameState.CurrentPlayerID + 1) % len(gameState.Players) // End human turn
+			gameState.CurrentPlayerID = (gameState.CurrentPlayerID + 1) % len(gameState.Players)
 			playNextTurn()
-		}),
-		widget.NewButtonWithIcon("", theme.CancelIcon(), func() { // Rollback button
-			if isTurnProcessing {
-				return
-			}
-			refreshTable()
-			refreshRack()
-			PlayNogoodSound() // Play Nogood sound for invalid move
-			SetStatus("Mouvement annulé : retour à l'état initial.")
-		}),
+		}
+	})
+	sortBtn = widget.NewButtonWithIcon("", theme.ViewRefreshIcon(), func() {
+		grummi.SortTiles(gameState.Players[0].Hand)
+		refreshRack()
+		SetStatus(grummi.T("status_sorting"))
+	})
+	drawBtn = widget.NewButtonWithIcon("", theme.ContentAddIcon(), func() {
+		performHumanDraw()
+	})
+	rollbackBtn = widget.NewButtonWithIcon("", theme.CancelIcon(), func() { // Rollback button
+		if isTurnProcessing {
+			return
+		}
+		refreshTable()
+		refreshRack()
+		PlayNogoodSound() // Play Nogood sound for invalid move
+		SetStatus(grummi.T("move_cancelled"))
+	})
+	pauseBtn = widget.NewButtonWithIcon("", theme.MediaPauseIcon(), func() {
+		togglePause()
+	})
+
+	buttons := container.NewVBox(
+		confirmBtn,
+		sortBtn,
+		drawBtn,
+		rollbackBtn,
+		pauseBtn,
 		/*
 			widget.NewButtonWithIcon("Passer", theme.CancelIcon(), func() { // Pass button
 				stopHumanTimer()
@@ -340,6 +325,14 @@ func main() {
 	statusTimerLabel.Alignment = fyne.TextAlignCenter
 	statusTimerLabel.TextStyle = fyne.TextStyle{Monospace: true, Bold: true}
 	statusTimerLabel.TextSize = 24
+
+	statusLimitLabel = canvas.NewText("", theme.ForegroundColor())
+	statusLimitLabel.Alignment = fyne.TextAlignCenter
+	statusLimitLabel.TextSize = 12
+
+	statusOpeningPointsLabel = canvas.NewText("", theme.ForegroundColor())
+	statusOpeningPointsLabel.Alignment = fyne.TextAlignCenter
+	statusOpeningPointsLabel.TextSize = 12
 
 	statusNames = make([]*canvas.Text, 4)
 	for i := range 4 {
@@ -418,7 +411,11 @@ func main() {
 			container.NewCenter(shrink(statusTitle, 140)),
 			statusDetails,
 		),
-		container.NewCenter(statusTimerLabel), // Pushes the timer to the very bottom
+		container.NewVBox(
+			container.NewCenter(statusLimitLabel),
+			container.NewCenter(statusOpeningPointsLabel),
+			container.NewCenter(statusTimerLabel),
+		), // Pushes the limit and timer to the very bottom
 		nil, nil,
 		layout.NewSpacer(), // Fills the middle space
 	)
@@ -458,6 +455,14 @@ func updateBackgroundColor() {
 	if statusTimerLabel != nil {
 		statusTimerLabel.Color = theme.ForegroundColor()
 		statusTimerLabel.Refresh()
+	}
+	if statusLimitLabel != nil {
+		statusLimitLabel.Color = theme.ForegroundColor()
+		statusLimitLabel.Refresh()
+	}
+	if statusOpeningPointsLabel != nil {
+		statusOpeningPointsLabel.Color = theme.ForegroundColor()
+		statusOpeningPointsLabel.Refresh()
 	}
 	// The new stats labels will automatically pick up the theme's text color.
 	// statusNames are still used for the hands grid, and their color is set in updateStatusTiles.
@@ -788,15 +793,15 @@ func syncUItoGameState() bool {
 		return false
 	}
 
-	// 5. Handle the "Opening" rule (30 points minimum for the first play)
+	// 5. Handle the "Opening" rule (25,30 or 50 points minimum for the first play)
 	if !gameState.Players[0].HasPlayedFirst {
 		oldVal := calculateTableValue(gameState.Table)
 		newVal := calculateTableValue(newTable)
 		playedPoints := newVal - oldVal
 
-		if playedPoints < 30 {
+		if playedPoints < gameState.RequiredOpeningPoints {
 			PlayNogoodSound() // Play Nogood sound for invalid move
-			SetStatus(grummi.T("err_opening_refused", playedPoints))
+			SetStatus(grummi.T("err_opening_refused", playedPoints, gameState.RequiredOpeningPoints))
 			return false
 		}
 		gameState.Players[0].HasPlayedFirst = true
@@ -1219,7 +1224,7 @@ func SetStatus(msg string) {
 // ****************************************************************************
 // showNewGameDialog()
 // ****************************************************************************
-func showNewGameDialog(win fyne.Window, startCallback func(playerName string, aiCount int)) {
+func showNewGameDialog(win fyne.Window, startCallback func(playerName string, aiCount int, timeLimit int, openingPoints int)) {
 	// 1. Champ pour le nom du joueur
 	nameEntry := widget.NewEntry()
 	nameEntry.SetPlaceHolder(grummi.T("placeholder_name"))
@@ -1227,14 +1232,26 @@ func showNewGameDialog(win fyne.Window, startCallback func(playerName string, ai
 	// Optionnel: On peut recharger le dernier nom utilisé depuis les préférences
 	nameEntry.SetText(fyne.CurrentApp().Preferences().StringWithFallback("PlayerName", "Humain"))
 
+	// 1bis. Sélecteur pour les points d'ouverture
+	openingOptions := []string{"25", "30", "50"}
+	openingSelect := widget.NewSelect(openingOptions, nil)
+	openingSelect.SetSelected(fyne.CurrentApp().Preferences().StringWithFallback("OpeningPoints", "30"))
+
 	// 2. Sélecteur pour le nombre d'adversaires (de 1 à 3)
 	aiSelect := widget.NewSelect([]string{"1", "2", "3"}, nil)
-	aiSelect.SetSelected("3") // Valeur par défaut
+	aiSelect.SetSelected(fyne.CurrentApp().Preferences().StringWithFallback("AICount", "3"))
+
+	// 2bis. Sélecteur pour la limite de temps
+	timeOptions := []string{grummi.T("option_no_limit"), "1 min", "2 min", "3 min", "4 min", "5 min"}
+	timeSelect := widget.NewSelect(timeOptions, nil)
+	timeSelect.SetSelected(fyne.CurrentApp().Preferences().StringWithFallback("TimeLimit", timeOptions[0]))
 
 	// 3. Mise en page du formulaire
 	form := widget.NewForm(
 		widget.NewFormItem(grummi.T("label_your_name"), nameEntry),
+		widget.NewFormItem(grummi.T("label_opening_points"), openingSelect),
 		widget.NewFormItem(grummi.T("label_ai_opponents"), aiSelect),
+		widget.NewFormItem(grummi.T("label_time_limit"), timeSelect),
 	)
 
 	// 4. Création du dialogue avec boutons Confirmer/Annuler
@@ -1254,16 +1271,25 @@ func showNewGameDialog(win fyne.Window, startCallback func(playerName string, ai
 					aiCount = 3
 				}
 
+				timeLimit := 0
+				fmt.Sscanf(timeSelect.Selected, "%d", &timeLimit)
+
+				openingPoints := 30
+				fmt.Sscanf(openingSelect.Selected, "%d", &openingPoints)
+
 				nomJoueur := nameEntry.Text
 				if nomJoueur == "" {
 					nomJoueur = "Humain" // Sécurité si le nom est vide
 				}
 
-				// On sauvegarde le nom pour la prochaine fois
+				// On sauvegarde les préférences pour la prochaine fois
 				fyne.CurrentApp().Preferences().SetString("PlayerName", nomJoueur)
+				fyne.CurrentApp().Preferences().SetString("OpeningPoints", openingSelect.Selected)
+				fyne.CurrentApp().Preferences().SetString("AICount", aiSelect.Selected)
+				fyne.CurrentApp().Preferences().SetString("TimeLimit", timeSelect.Selected)
 
 				// On lance le callback avec les données récupérées
-				startCallback(nomJoueur, aiCount)
+				startCallback(nomJoueur, aiCount, timeLimit, openingPoints)
 			} else {
 				// If the user cancels the dialog, quit the application
 				myApp.Quit()
@@ -1276,12 +1302,14 @@ func showNewGameDialog(win fyne.Window, startCallback func(playerName string, ai
 // ****************************************************************************
 // onNewGame()
 // ****************************************************************************
-func onNewGame(name string, ais int) {
+func onNewGame(name string, ais int, timeLimit int, openingPoints int) {
 	if isGameLoading {
 		return
 	}
 	isGameLoading = true
 	stopHumanTimer()
+
+	turnLimitMinutes = timeLimit
 
 	go func() {
 		defer func() { isGameLoading = false }()
@@ -1289,6 +1317,7 @@ func onNewGame(name string, ais int) {
 		gameLogger := &uiLogger{}
 		newGameState := grummi.InitializeGame(ais+1, gameLogger)
 		newGameState.Players[0].Name = name
+		newGameState.RequiredOpeningPoints = openingPoints
 
 		// Swap global state immediately so logs/refreshes use new data
 		fyne.Do(func() {
@@ -1296,6 +1325,15 @@ func onNewGame(name string, ais int) {
 			gameState.TurnNumber = 1
 			refreshRack()
 			refreshTable()
+
+			if turnLimitMinutes == 0 {
+				statusLimitLabel.Text = grummi.T("label_time_limit") + " " + grummi.T("option_no_limit")
+			} else {
+				statusLimitLabel.Text = grummi.T("label_time_limit") + " " + fmt.Sprintf("%d min", turnLimitMinutes)
+			}
+			statusOpeningPointsLabel.Text = grummi.T("label_opening_points") + " " + fmt.Sprintf("%d", openingPoints)
+			statusOpeningPointsLabel.Refresh()
+			statusLimitLabel.Refresh()
 		})
 
 		// DetermineFirstPlayer contains sleeps/logs; now safe as global state is swapped
@@ -1308,6 +1346,51 @@ func onNewGame(name string, ais int) {
 
 		playNextTurn()
 	}()
+}
+
+// performHumanDraw executes an automatic or manual draw for the human player and ends their turn.
+func performHumanDraw() {
+	if isTurnProcessing {
+		return
+	}
+
+	fyne.Do(func() {
+		stopHumanTimer()
+		humanTimerElapsed = 0
+
+		if len(gameState.Remaining) > 0 {
+			drawnTile := gameState.Remaining[0]
+			gameState.DrawTile()
+			refreshRack()
+
+			// Find where the new tile was placed in the rack to animate it
+			targetIdx := -1
+			for i := 0; i < 80; i++ {
+				if t := getTileAtCell(playerRack, i); t != nil && *t == drawnTile {
+					targetIdx = i
+					break
+				}
+			}
+
+			SetStatus(grummi.T("status_drawn", len(gameState.Remaining)))
+			if targetIdx != -1 {
+				cellStack := playerRack.Objects[targetIdx].(*fyne.Container).Objects[0].(*fyne.Container)
+				cellStack.Objects[1].Hide() // Hide initially to let animation play
+				animateTileToRack(drawnTile, cellStack, targetIdx)
+			}
+		} else {
+			SetStatus(grummi.T("err_draw_pile_empty"))
+		}
+
+		gameState.ConsecutivePasses++ // Drawing counts as a pass for stalemate
+		gameState.TurnNumber++        // Increment turn number after human draws
+		updateStatusTiles()           // Refresh status display
+		if checkGameEnd() {
+			return // Game ended
+		}
+		gameState.CurrentPlayerID = (gameState.CurrentPlayerID + 1) % len(gameState.Players) // End human turn
+		playNextTurn()
+	})
 }
 
 // ****************************************************************************
@@ -1325,6 +1408,11 @@ func playNextTurn() {
 		defer func() { isTurnProcessing = false }()
 
 		for gameState.Players[gameState.CurrentPlayerID].IsAI { // Loop through AI turns until it's the human player's turn
+			if isPaused {
+				time.Sleep(200 * time.Millisecond)
+				continue
+			}
+
 			currentPlayer := &gameState.Players[gameState.CurrentPlayerID]
 
 			// Initial "thinking" pause
@@ -1352,6 +1440,7 @@ func playNextTurn() {
 		// It's now the human player's turn
 		fyne.Do(func() {
 			SetStatus(grummi.T("status_human_turn", gameState.Players[0].Name))
+			humanTimerElapsed = 0
 			startHumanTimer()
 			flashTimer()
 		})
@@ -1491,11 +1580,12 @@ func startHumanTimer() {
 
 	timerStop = make(chan bool)
 	localStop := timerStop
-	startTime := time.Now()
+	startTime := time.Now().Add(-humanTimerElapsed)
 
 	PlayBeepSound() // Play a beep at the start of the timer
 
 	go func() {
+		warningFlashed := false
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 
@@ -1505,6 +1595,7 @@ func startHumanTimer() {
 				return
 			case <-ticker.C:
 				elapsed := time.Since(startTime)
+				humanTimerElapsed = elapsed
 				minutes := int(elapsed.Minutes())
 				seconds := int(elapsed.Seconds()) % 60
 
@@ -1514,9 +1605,57 @@ func startHumanTimer() {
 						statusTimerLabel.Refresh()
 					}
 				})
+
+				if turnLimitMinutes > 0 && !warningFlashed && int(elapsed.Seconds()) >= (turnLimitMinutes*60-10) {
+					warningFlashed = true
+					flashTimer()
+				}
+
+				if turnLimitMinutes > 0 && elapsed >= time.Duration(turnLimitMinutes)*time.Minute {
+					fyne.Do(func() {
+						SetStatus(grummi.T("status_auto_draw"))
+					})
+					performHumanDraw()
+					return
+				}
 			}
 		}
 	}()
+}
+
+// togglePause switches the game between paused and running states.
+// It hides tiles and stops the clock when paused to prevent cheating.
+func togglePause() {
+	isPaused = !isPaused
+	if isPaused {
+		stopHumanTimer()
+		gameTable.Hide()
+		playerRack.Hide()
+		pauseBtn.SetIcon(theme.MediaPlayIcon())
+
+		confirmBtn.Disable()
+		sortBtn.Disable()
+		drawBtn.Disable()
+		rollbackBtn.Disable()
+
+		SetStatus(grummi.T("status_paused"))
+	} else {
+		gameTable.Show()
+		playerRack.Show()
+		pauseBtn.SetIcon(theme.MediaPauseIcon())
+
+		confirmBtn.Enable()
+		sortBtn.Enable()
+		drawBtn.Enable()
+		rollbackBtn.Enable()
+
+		SetStatus(grummi.T("status_resumed"))
+		if !gameState.Players[gameState.CurrentPlayerID].IsAI {
+			startHumanTimer()
+		}
+	}
+	gameTable.Refresh()
+	playerRack.Refresh()
 }
 
 // ****************************************************************************
