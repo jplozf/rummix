@@ -83,7 +83,7 @@ var GitVersion = "dev"
 var nTurn = 1
 
 // ----------------------------------------------------------------------------
-// main()
+// main(), historically, it was the first version of the solver and it ran only in CLI mode.
 // ----------------------------------------------------------------------------
 func main() {
 	args := os.Args
@@ -277,7 +277,7 @@ func dealTiles(tiles []Tile, numPlayers int) ([]Player, []Tile) {
 		isAI := false
 
 		if i == 0 {
-			name = "Humain" // The first player is you
+			name = "Humain" // The first player is the human player
 			isAI = false
 		} else {
 			// The following are AI (AI#1, AI#2...)
@@ -1404,7 +1404,7 @@ func (state *GameState) PrintUserMenu(p *Player, pool []Tile, points int) {
 	fmt.Println("\n" + strings.Repeat("═", 80))
 	fmt.Println("                                                        _ ")
 	fmt.Println("                    __ _ _ __ _   _ _ __ ___  _ __ ___ (_)")
-	fmt.Println("                   / _` | '__| | | | '_ ` _ \\| '_ ` _ \\| |") // This line was duplicated, fixed.
+	fmt.Println("                   / _` | '__| | | | '_ ` _ \\| '_ ` _ \\| |")
 	fmt.Println("                  | (_| | |  | |_| | | | | | | | | | | | |")
 	fmt.Println("                   \\__, |_|   \\__,_|_| |_| |_|_| |_| |_|_|")
 	fmt.Printf("                   |___/        v%s © JPL 2026\n", getFullVersion())

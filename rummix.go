@@ -75,12 +75,8 @@ var aiLogEntry *widget.Label
 var humanPool []grummi.Tile // Added for human player's temporary tiles
 var aiLogScroll *container.Scroll
 
+var rummixLogo *canvas.Image
 var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
-
-// resourcePocWav is a placeholder. You must bundle a sound file named poc.wav
-// using: fyne bundle poc.wav >> icon.go
-// This will create the resourcePocWav variable automatically.
-// var resourcePocWav fyne.Resource
 
 // playerStats is a helper struct to hold player statistics for sorting.
 type playerStats struct {
@@ -158,21 +154,6 @@ func (l *uiLogger) Log(format string, args ...interface{}) {
 	time.Sleep(600 * time.Millisecond) // Short delay to let the user see the move
 }
 
-// playPoc plays the "poc" sound effect using the Fyne audio API.
-/*
-func playPoc() {
-	if resourcePocWav == nil {
-		return
-	}
-	s, err := audio.NewStream(resourcePocWav)
-	if err == nil {
-		s.Play()
-	} else {
-		fmt.Printf("Audio error: %v\n", err)
-	}
-}
-*/
-
 // ----------------------------------------------------------------------------
 // main()
 // ----------------------------------------------------------------------------
@@ -219,7 +200,7 @@ func main() {
 	aiLogEntry = widget.NewLabel("")
 	aiLogEntry.Wrapping = fyne.TextWrapWord
 	aiLogScroll = container.NewScroll(aiLogEntry)
-	aiLogScroll.SetMinSize(fyne.NewSize(250, 100))
+	aiLogScroll.SetMinSize(fyne.NewSize(250, 156)) // Match the player rack height
 
 	playerRack = container.New(layout.NewGridLayoutWithColumns(20))
 	for i := range 80 { // 4 rows * 20 columns
@@ -278,44 +259,31 @@ func main() {
 		drawBtn,
 		rollbackBtn,
 		pauseBtn,
-		/*
-			widget.NewButtonWithIcon("Passer", theme.CancelIcon(), func() { // Pass button
-				stopHumanTimer()
-				SetStatus("Vous avez passé votre tour.")
-				gameState.ConsecutivePasses++ // Explicitly passing
-				gameState.TurnNumber++        // Increment turn number after human passes
-				updateStatusTiles()           // Refresh status display
-				if checkGameEnd() {
-					return // Game ended
-				}
-				gameState.CurrentPlayerID = (gameState.CurrentPlayerID + 1) % len(gameState.Players)
-				playNextTurn()
-			}),
-		*/
 	)
 
 	gapBetweenRackAndButtons := canvas.NewRectangle(color.Transparent)
 	gapBetweenRackAndButtons.SetMinSize(fyne.NewSize(10, 0))
 
-	// The chronometer is now part of the status area, so it's removed from here.
+	// Logo alignment logic:
+	// Width 140 to match the statusArea, height 156 to match the rack height (4 rows * 39px).
+	rummixLogo = canvas.NewImageFromResource(resourceRummixPng)
+	rummixLogo.FillMode = canvas.ImageFillContain
+	rummixLogo.SetMinSize(fyne.NewSize(100, 100))
+
+	logoSpacer := canvas.NewRectangle(color.Transparent)
+	logoSpacer.SetMinSize(fyne.NewSize(140, 156))
+	logoRightContainer := container.NewStack(logoSpacer, container.NewCenter(rummixLogo))
+
 	rackAndButtonsContainer := container.NewHBox(
 		gapBetweenRackAndButtons,
 		fixedRack,
 		gapBetweenRackAndButtons,
-		// The timer is no longer here.
-		// We can add a flexible spacer here if needed, or just remove the center wrapper.
-		// For now, let's just remove the timer from this HBox.
-		// If you want to maintain the spacing, you could add another gapBetweenRackAndButtons
-		// or a layout.NewSpacer() here.
-		// For this change, I'll remove the timer and keep the existing gaps.
-		// If you want to fill the space, let me know!
-		// container.NewCenter(statusTimerLabel), // Removed
 		gapBetweenRackAndButtons,
-		container.NewPadded(buttons))
+		container.NewPadded(buttons),
+		gapBetweenRackAndButtons,
+		logoRightContainer)
 
-	rackAssembly := container.NewBorder(nil, nil, aiLogScroll, nil, rackAndButtonsContainer)
 	statusMsg = widget.NewLabel("")
-	centeredBottom := container.NewBorder(nil, statusMsg, nil, nil, rackAssembly)
 
 	// The status area on the right
 	statusLabel = widget.NewLabelWithStyle("1", fyne.TextAlignTrailing, fyne.TextStyle{Bold: true})
@@ -351,10 +319,6 @@ func main() {
 		statsGamesLabels[i] = widget.NewLabelWithStyle("-", fyne.TextAlignTrailing, fyne.TextStyle{})
 		statsPointsLabels[i] = widget.NewLabelWithStyle("-", fyne.TextAlignTrailing, fyne.TextStyle{})
 	}
-
-	// Old statusStats and statusStatsNames are removed.
-	// var statusStatsNames []*canvas.Text
-	// var statusStats []*widget.Label
 
 	statusTiles = make([]*widget.Label, 4)
 	for i := range 4 {
@@ -424,10 +388,22 @@ func main() {
 	readPreferences()
 	refreshTable() // Display the initial (empty) table
 
-	// Group the table and status area together in an HBox to remove the gap between them,
-	// then center the combined assembly in the main window area.
-	tableAndStatus := container.NewCenter(container.NewHBox(fixedTable, gapBetweenRackAndButtons, statusArea))
-	mainInterface := container.NewBorder(nil, centeredBottom, nil, nil, tableAndStatus)
+	// Define a 3-column layout to ensure vertical alignment of side elements
+	// Left Column: Status top, AI Log bottom
+	leftTopSpacer := canvas.NewRectangle(color.Transparent)
+	leftTopSpacer.SetMinSize(fyne.NewSize(250, 416)) // Match table height (8 rows * 52px)
+	vGapLeft := canvas.NewRectangle(color.Transparent)
+	vGapLeft.SetMinSize(fyne.NewSize(0, 20)) // 20px space
+	leftColumn := container.NewBorder(container.NewVBox(container.NewStack(leftTopSpacer, statusArea), vGapLeft), nil, nil, nil, aiLogScroll)
+
+	// Center Column: Table top, Rack/Buttons bottom
+	vGapCenter := canvas.NewRectangle(color.Transparent)
+	vGapCenter.SetMinSize(fyne.NewSize(0, 20))
+	centerColumn := container.NewVBox(fixedTable, vGapCenter, rackAndButtonsContainer)
+
+	// Assemble rows horizontally and center the whole board
+	gameBoard := container.NewHBox(gapBetweenRackAndButtons, leftColumn, gapBetweenRackAndButtons, centerColumn, gapBetweenRackAndButtons)
+	mainInterface := container.NewBorder(nil, statusMsg, nil, nil, container.NewCenter(gameBoard))
 
 	windowContent := container.NewStack(background, mainInterface)
 	finalStack := container.NewStack(windowContent, overlay)
@@ -628,6 +604,9 @@ func refreshTable() {
 	gameTable.Refresh()
 }
 
+// ----------------------------------------------------------------------------
+// getStartPos()
+// ----------------------------------------------------------------------------
 // getStartPos calculates the starting position of a tile animation based on the player ID.
 func getStartPos(playerID int, targetPos fyne.Position, winSize fyne.Size) fyne.Position {
 	switch playerID {
@@ -644,6 +623,9 @@ func getStartPos(playerID int, targetPos fyne.Position, winSize fyne.Size) fyne.
 	}
 }
 
+// ----------------------------------------------------------------------------
+// animateTileIn()
+// ----------------------------------------------------------------------------
 // animateTileIn handles the visual movement of a tile from the window border to its destination.
 func animateTileIn(tile grummi.Tile, targetCell *fyne.Container, playerID int, idx int) {
 	// 1. Render a phantom tile for animation
@@ -703,6 +685,9 @@ func animateTileIn(tile grummi.Tile, targetCell *fyne.Container, playerID int, i
 	})
 }
 
+// ----------------------------------------------------------------------------
+// animateTileToRack()
+// ----------------------------------------------------------------------------
 // animateTileToRack handles the visual movement of a drawn tile from the right window border to its rack slot.
 func animateTileToRack(tile grummi.Tile, targetCell *fyne.Container, idx int) {
 	phantom := container.NewStack(renderTile(&tile))
@@ -742,6 +727,9 @@ func animateTileToRack(tile grummi.Tile, targetCell *fyne.Container, idx int) {
 	})
 }
 
+// ----------------------------------------------------------------------------
+// syncUItoGameState()
+// ----------------------------------------------------------------------------
 // syncUItoGameState reads the current state of the UI grids and updates the underlying game logic.
 // It returns true if the current table configuration is valid.
 func syncUItoGameState() bool {
@@ -814,6 +802,9 @@ func syncUItoGameState() bool {
 	return true
 }
 
+// ----------------------------------------------------------------------------
+// compareTables()
+// ----------------------------------------------------------------------------
 // compareTables performs a deep comparison of two game tables,
 // considering combinations and tiles within them.
 // It sorts combinations and tiles to ensure that rearrangements don't
@@ -857,6 +848,9 @@ func compareTables(table1, table2 [][]grummi.Tile) bool {
 	return true
 }
 
+// ----------------------------------------------------------------------------
+// areCombinationsEqual()
+// ----------------------------------------------------------------------------
 // areCombinationsEqual checks if two combinations are identical (after sorting their tiles).
 func areCombinationsEqual(combo1, combo2 []grummi.Tile) bool {
 	if len(combo1) != len(combo2) {
@@ -870,6 +864,9 @@ func areCombinationsEqual(combo1, combo2 []grummi.Tile) bool {
 	return true
 }
 
+// ----------------------------------------------------------------------------
+// compareCombinationsForSorting()
+// ----------------------------------------------------------------------------
 // compareCombinationsForSorting compares two combinations for sorting purposes.
 // Returns -1 if combo1 < combo2, 0 if equal, 1 if combo1 > combo2.
 func compareCombinationsForSorting(combo1, combo2 []grummi.Tile) int {
@@ -927,6 +924,9 @@ func compareCombinationsForSorting(combo1, combo2 []grummi.Tile) int {
 	return 0
 }
 
+// ----------------------------------------------------------------------------
+// getTileAtCell()
+// ----------------------------------------------------------------------------
 // getTileAtCell is a helper to retrieve the grummi.Tile pointer from a specific cell in a grid.
 func getTileAtCell(grid *fyne.Container, idx int) *grummi.Tile {
 	if idx < 0 || idx >= len(grid.Objects) {
@@ -943,6 +943,9 @@ func getTileAtCell(grid *fyne.Container, idx int) *grummi.Tile {
 	return nil
 }
 
+// ----------------------------------------------------------------------------
+// calculateTableValue()
+// ----------------------------------------------------------------------------
 // calculateTableValue sums the points of all combinations currently on the table.
 func calculateTableValue(table [][]grummi.Tile) int {
 	total := 0
@@ -953,6 +956,9 @@ func calculateTableValue(table [][]grummi.Tile) int {
 	return total
 }
 
+// ----------------------------------------------------------------------------
+// isCellOccupied()
+// ----------------------------------------------------------------------------
 // isCellOccupied checks if a specific cell in the gameTable contains a tile.
 func isCellOccupied(grid *fyne.Container, idx int) bool {
 	if idx < 0 || idx >= len(grid.Objects) {
@@ -963,6 +969,9 @@ func isCellOccupied(grid *fyne.Container, idx int) bool {
 	return len(cellStack.Objects) > 1
 }
 
+// ----------------------------------------------------------------------------
+// getRunColor()
+// ----------------------------------------------------------------------------
 // getRunColor returns the color of a run by finding the first non-joker tile.
 func getRunColor(combo []grummi.Tile) grummi.Color {
 	for _, t := range combo {
@@ -973,6 +982,9 @@ func getRunColor(combo []grummi.Tile) grummi.Color {
 	return grummi.Red
 }
 
+// ----------------------------------------------------------------------------
+// getTileValueInRun()
+// ----------------------------------------------------------------------------
 // getTileValueInRun deduces the intended value of a tile (including jokers) within a run.
 func getTileValueInRun(combo []grummi.Tile, index int) int {
 	t := combo[index]
@@ -1348,6 +1360,9 @@ func onNewGame(name string, ais int, timeLimit int, openingPoints int) {
 	}()
 }
 
+// ----------------------------------------------------------------------------
+// performHumanDraw()
+// ----------------------------------------------------------------------------
 // performHumanDraw executes an automatic or manual draw for the human player and ends their turn.
 func performHumanDraw() {
 	if isTurnProcessing {
@@ -1623,6 +1638,9 @@ func startHumanTimer() {
 	}()
 }
 
+// ----------------------------------------------------------------------------
+// togglePause()
+// ----------------------------------------------------------------------------
 // togglePause switches the game between paused and running states.
 // It hides tiles and stops the clock when paused to prevent cheating.
 func togglePause() {
@@ -1674,6 +1692,9 @@ func stopHumanTimer() {
 	}
 }
 
+// ----------------------------------------------------------------------------
+// flashTimer()
+// ----------------------------------------------------------------------------
 // flashTimer creates a visual color animation on the timer to alert the player.
 func flashTimer() {
 	if statusTimerLabel == nil {

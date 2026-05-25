@@ -2,9 +2,15 @@ package grummi
 
 import "fmt"
 
-var CurrentLanguage = "fr"
+// ----------------------------------------------------------------------------
+// Quick & Dirty I18N module
+// ----------------------------------------------------------------------------
 
+var CurrentLanguage = "fr"
 var translations = map[string]map[string]string{
+	// ----------------------------------------------------------------------------
+	// ENGLISH STRINGS
+	// ----------------------------------------------------------------------------
 	"en": {
 		"menu_file":                   "File",
 		"menu_new_game":               "New Game",
@@ -118,6 +124,9 @@ var translations = map[string]map[string]string{
 		"app_description":             "A tile-based Rummy game inspired by the classic Rummikub rules.",
 		"move_cancelled":              "Move cancelled: returning to initial state.",
 	},
+	// ----------------------------------------------------------------------------
+	// FRENCH STRINGS
+	// ----------------------------------------------------------------------------
 	"fr": {
 		"menu_file":                   "Fichier",
 		"menu_new_game":               "Nouvelle Partie",
@@ -233,6 +242,9 @@ var translations = map[string]map[string]string{
 	},
 }
 
+// ----------------------------------------------------------------------------
+// T()
+// ----------------------------------------------------------------------------
 // T returns the translated string for the given key.
 // If the key is not found, it returns the key itself.
 func T(key string, args ...interface{}) string {
@@ -256,6 +268,9 @@ func T(key string, args ...interface{}) string {
 	return val
 }
 
+// ----------------------------------------------------------------------------
+// SetLanguage()
+// ----------------------------------------------------------------------------
 // SetLanguage updates the global language setting.
 func SetLanguage(lang string) {
 	if _, ok := translations[lang]; ok {
