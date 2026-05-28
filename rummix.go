@@ -17,6 +17,7 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -25,6 +26,28 @@ import (
 // ----------------------------------------------------------------------------
 // TYPES
 // ----------------------------------------------------------------------------
+type HoverButton struct {
+	widget.Button
+	tooltip string
+}
+
+func NewHoverButton(tooltip string, icon fyne.Resource, tapped func()) *HoverButton {
+	hb := &HoverButton{tooltip: tooltip}
+	hb.Icon = icon
+	hb.OnTapped = tapped
+	hb.ExtendBaseWidget(hb)
+	return hb
+}
+
+func (h *HoverButton) MouseIn(e *desktop.MouseEvent) {
+	statusMsg.SetText(stripANSI(h.tooltip))
+}
+
+func (h *HoverButton) MouseOut() {
+	statusMsg.SetText("")
+}
+
+func (h *HoverButton) MouseMoved(e *desktop.MouseEvent) {}
 
 // ----------------------------------------------------------------------------
 // CONSTANTS
@@ -38,11 +61,11 @@ var (
 	rackCellSize      fyne.Size
 	isPaused          bool
 	humanTimerElapsed time.Duration
-	confirmBtn        *widget.Button
-	sortBtn           *widget.Button
-	drawBtn           *widget.Button
-	rollbackBtn       *widget.Button
-	pauseBtn          *widget.Button
+	confirmBtn        *HoverButton
+	sortBtn           *HoverButton
+	drawBtn           *HoverButton
+	rollbackBtn       *HoverButton
+	pauseBtn          *HoverButton
 	turnLimitMinutes  int
 )
 var boardSlots []fyne.CanvasObject
@@ -108,6 +131,7 @@ func stripANSI(str string) string {
 		"🏆", "",
 		"📊", "",
 		"👤", "",
+		"💻", "",
 		"🃏", "",
 		"✔", "",
 		"✖", "",
@@ -184,13 +208,13 @@ func main() {
 	humanPool = []grummi.Tile{} // Initialize the pool for the human player
 
 	// The main game table
-	gameTable = container.New(layout.NewGridLayoutWithColumns(24))
-	for i := range 192 {
+	gameTable = container.New(layout.NewGridLayoutWithColumns(28))
+	for i := range 224 {
 		cell := createCell(boardCellSize, true)
 		gameTable.Add(cell)
 		registerCell(cell, gameTable, i)
 	}
-	tableWidth := boardCellSize.Width * 24
+	tableWidth := boardCellSize.Width * 28
 	tableHeight := boardCellSize.Height * 8
 	totalTableSize := fyne.NewSize(tableWidth, tableHeight)
 
@@ -214,7 +238,7 @@ func main() {
 
 	fixedRack := container.NewGridWrap(totalRackSize, playerRack)
 
-	confirmBtn = widget.NewButtonWithIcon("", theme.ConfirmIcon(), func() {
+	confirmBtn = NewHoverButton(grummi.T("btn_validate"), theme.ConfirmIcon(), func() {
 		if isTurnProcessing {
 			return
 		}
@@ -232,15 +256,15 @@ func main() {
 			playNextTurn()
 		}
 	})
-	sortBtn = widget.NewButtonWithIcon("", theme.ViewRefreshIcon(), func() {
+	sortBtn = NewHoverButton(grummi.T("btn_arrange"), theme.ViewRefreshIcon(), func() {
 		grummi.SortTiles(gameState.Players[0].Hand)
 		refreshRack()
 		SetStatus(grummi.T("status_sorting"))
 	})
-	drawBtn = widget.NewButtonWithIcon("", theme.ContentAddIcon(), func() {
+	drawBtn = NewHoverButton(grummi.T("btn_draw"), theme.ContentAddIcon(), func() {
 		performHumanDraw()
 	})
-	rollbackBtn = widget.NewButtonWithIcon("", theme.CancelIcon(), func() { // Rollback button
+	rollbackBtn = NewHoverButton(grummi.T("btn_rollback"), theme.CancelIcon(), func() { // Rollback button
 		if isTurnProcessing {
 			return
 		}
@@ -249,7 +273,7 @@ func main() {
 		PlayNogoodSound() // Play Nogood sound for invalid move
 		SetStatus(grummi.T("move_cancelled"))
 	})
-	pauseBtn = widget.NewButtonWithIcon("", theme.MediaPauseIcon(), func() {
+	pauseBtn = NewHoverButton(grummi.T("btn_pause"), theme.MediaPauseIcon(), func() {
 		togglePause()
 	})
 
@@ -345,8 +369,8 @@ func main() {
 	statsGrid := container.New(layout.NewGridLayoutWithColumns(4))
 	// Add headers for the stats table
 	statsGrid.Add(shrink(widget.NewLabelWithStyle(grummi.T("column_player"), fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), 60))
-	statsGrid.Add(shrink(widget.NewLabelWithStyle(grummi.T("column_games"), fyne.TextAlignTrailing, fyne.TextStyle{Bold: true}), 25))
 	statsGrid.Add(shrink(widget.NewLabelWithStyle(grummi.T("column_wins"), fyne.TextAlignTrailing, fyne.TextStyle{Bold: true}), 25))
+	statsGrid.Add(shrink(widget.NewLabelWithStyle(grummi.T("column_games"), fyne.TextAlignTrailing, fyne.TextStyle{Bold: true}), 25))
 	statsGrid.Add(shrink(widget.NewLabelWithStyle(grummi.T("column_score"), fyne.TextAlignTrailing, fyne.TextStyle{Bold: true}), 30))
 
 	// Add player stat labels to the grid
@@ -411,7 +435,7 @@ func main() {
 	// Let's show the window and run the app
 	updateBackgroundColor()
 	myWindow.SetContent(finalStack)
-	myWindow.Resize(fyne.NewSize(1100, 700))
+	myWindow.Resize(fyne.NewSize(1400, 700))
 
 	SetStatus(grummi.T("status_welcome"))
 	showNewGameDialog(myWindow, onNewGame)
@@ -508,7 +532,7 @@ func refreshRack() {
 func refreshTable() {
 	// Identify what was already on the table to avoid re-animating existing tiles
 	existingTiles := make(map[string]int)
-	for i := 0; i < 192; i++ {
+	for i := 0; i < 224; i++ {
 		if t := getTileAtCell(gameTable, i); t != nil {
 			key := fmt.Sprintf("%d-%d", t.Value, t.Color)
 			existingTiles[key]++
@@ -529,12 +553,12 @@ func refreshTable() {
 		}
 	}
 
-	const maxCols = 24 // Number of columns in gameTable
+	const maxCols = 28 // Number of columns in gameTable
 	groupCount := 0
 
 	// placeTile is a helper to set a tile and optionally animate it if it's new to the table
 	placeTile := func(idx int, tile grummi.Tile) {
-		if idx < 0 || idx >= 192 {
+		if idx < 0 || idx >= 224 {
 			return
 		}
 		setTileAt(gameTable, idx, tile.Value, tile.Color)
@@ -567,7 +591,7 @@ func refreshTable() {
 			for i := range combo {
 				val := getTileValueInRun(combo, i)
 				idx := row*maxCols + (val - 1)
-				if idx >= 0 && idx < 192 && isCellOccupied(gameTable, idx) {
+				if idx >= 0 && idx < 224 && isCellOccupied(gameTable, idx) {
 					isRow0Occupied = true
 					break
 				}
@@ -583,12 +607,14 @@ func refreshTable() {
 				}
 			}
 		} else {
-			// Logic for Groups: Place them on the right side (columns 15-23)
-			// We fit 2 groups per row: cols 15-18 and 20-23.
-			r := groupCount / 2
-			cOffset := 15
-			if groupCount%2 == 1 {
-				cOffset = 20
+			// Logic for Groups: Place them on the right side (columns 14-27)
+			// We fit 3 groups per row with 1-cell gaps: cols 14-17, 19-22, and 24-27.
+			r := groupCount / 3
+			cOffset := 14
+			if groupCount%3 == 1 {
+				cOffset = 19
+			} else if groupCount%3 == 2 {
+				cOffset = 24
 			}
 
 			if r < 8 {
@@ -630,35 +656,41 @@ func getStartPos(playerID int, targetPos fyne.Position, winSize fyne.Size) fyne.
 func animateTileIn(tile grummi.Tile, targetCell *fyne.Container, playerID int, idx int) {
 	// 1. Render a phantom tile for animation
 	phantom := container.NewStack(renderTile(&tile))
-	phantom.Resize(boardCellSize)
+	phantom.Resize(boardCellSize) // Phantom tile should be the same size as a board cell
 	overlay.Add(phantom)
 
 	// 2. Determine positions relative to overlay
 	c := myWindow.Canvas()
 	if c == nil {
 		overlay.Remove(phantom)
+		// If the canvas is not ready, ensure the real tile is shown immediately
+		if len(targetCell.Objects) > 1 {
+			targetCell.Objects[1].Show()
+			targetCell.Refresh()
+		}
 		return
 	}
 
-	// Calculate target position relative to the root/overlay.
-	// Since Fyne doesn't provide absolute positioning easily, we calculate it
-	// based on the known centering and grid layout.
 	winSize := myWindow.Content().Size()
-	tableW := float32(24) * boardCellSize.Width
-	tableH := float32(8) * boardCellSize.Height
-	statusW := float32(140) // Estimated status area width
+	statusMsgHeight := statusMsg.MinSize().Height
 
-	contentW := tableW + statusW
-	offsetX := (winSize.Width - contentW) / 2
+	// These are the calculated minimum sizes for the gameBoard based on its children's minimum sizes.
+	// Since gameBoard is centered, these are effectively its rendered dimensions.
+	// gameBoardWidth = 10 (gap) + 250 (leftColumn) + 10 (gap) + 1120 (centerColumn) + 10 (gap) = 1400
+	const gameBoardRenderedWidth = 1400.0
+	// gameBoardHeight = max(leftColumn.Height (592), centerColumn.Height (594)) = 594
+	const gameBoardRenderedHeight = 594.0
 
-	// Estimate vertical centering above the rack/bottom area (~250px)
-	bottomH := float32(250)
-	offsetY := (winSize.Height - bottomH - tableH) / 2
-	if offsetY < 0 {
-		offsetY = 10 // Minimum padding
-	}
+	// Calculate gameBoard's top-left position within the window content area (excluding statusMsg at bottom)
+	gameBoardOffsetX := (winSize.Width - gameBoardRenderedWidth) / 2
+	gameBoardOffsetY := (winSize.Height - statusMsgHeight - gameBoardRenderedHeight) / 2
 
-	finalPos := fyne.NewPos(offsetX+float32(idx%24)*boardCellSize.Width, offsetY+float32(idx/24)*boardCellSize.Height)
+	// The gameTable is located within the centerColumn, which is offset within the gameBoard HBox.
+	// gameBoard HBox children: gap (10), leftColumn (250), gap (10), centerColumn (table starts here)
+	tableGlobalOffsetX := gameBoardOffsetX + float32(10) + float32(250) + float32(10)
+	tableGlobalOffsetY := gameBoardOffsetY // centerColumn is aligned to the top of gameBoard
+
+	finalPos := fyne.NewPos(tableGlobalOffsetX+float32(idx%28)*boardCellSize.Width, tableGlobalOffsetY+float32(idx/28)*boardCellSize.Height)
 
 	startPos := getStartPos(playerID, finalPos, winSize)
 
@@ -693,16 +725,34 @@ func animateTileToRack(tile grummi.Tile, targetCell *fyne.Container, idx int) {
 	phantom := container.NewStack(renderTile(&tile))
 	phantom.Resize(rackCellSize)
 	overlay.Add(phantom)
-
+	c := myWindow.Canvas()
+	if c == nil {
+		overlay.Remove(phantom)
+		// If the canvas is not ready, ensure the real tile is shown immediately
+		if len(targetCell.Objects) > 1 {
+			targetCell.Objects[1].Show()
+			targetCell.Refresh()
+		}
+		return
+	}
 	winSize := myWindow.Content().Size()
+	statusMsgHeight := statusMsg.MinSize().Height
 
-	// Coordinate calculations for the rack based on the main layout:
-	// rackOffsetX = aiLogScroll(250) + gap(10)
-	rackOffsetX := float32(260)
-	// rackOffsetY estimate = WindowHeight - statusMsg (~30) - rackHeight (4*39=156)
-	rackOffsetY := winSize.Height - 186
+	const gameBoardRenderedWidth = 1400.0
+	const gameBoardRenderedHeight = 594.0
 
-	finalPos := fyne.NewPos(rackOffsetX+float32(idx%20)*rackCellSize.Width, rackOffsetY+float32(idx/20)*rackCellSize.Height)
+	gameBoardOffsetX := (winSize.Width - gameBoardRenderedWidth) / 2
+	gameBoardOffsetY := (winSize.Height - statusMsgHeight - gameBoardRenderedHeight) / 2
+
+	// Calculate centerColumn's top-left position within the window content area
+	centerColumnGlobalOffsetX := gameBoardOffsetX + float32(10) + float32(250) + float32(10)
+	centerColumnGlobalOffsetY := gameBoardOffsetY
+
+	// rackAndButtonsContainer is the 3rd child of centerColumn (index 2)
+	// Its Y position relative to centerColumn is fixedTable.Size().Height + vGapCenter.MinSize().Height (416 + 20 = 436)
+	rackAndButtonsContainerOffsetYInCenterColumn := (float32(8) * boardCellSize.Height) + float32(20)
+	fixedRackOffsetXInRackAndButtonsContainer := float32(10) // fixedRack is the 2nd child of rackAndButtonsContainer (index 1), after a 10px gap
+	finalPos := fyne.NewPos(centerColumnGlobalOffsetX+fixedRackOffsetXInRackAndButtonsContainer+float32(idx%20)*rackCellSize.Width, centerColumnGlobalOffsetY+rackAndButtonsContainerOffsetYInCenterColumn+float32(idx/20)*rackCellSize.Height)
 	startPos := fyne.NewPos(winSize.Width, finalPos.Y) // Start from the right edge
 
 	phantom.Move(startPos)
@@ -745,9 +795,9 @@ func syncUItoGameState() bool {
 	// We scan row by row, grouping contiguous tiles into combinations.
 	newTable := [][]grummi.Tile{}
 	var currentCombo []grummi.Tile
-	const cols = 24
+	const cols = 28
 
-	for i := 0; i < 192; i++ {
+	for i := 0; i < 224; i++ {
 		t := getTileAtCell(gameTable, i)
 		if t != nil {
 			currentCombo = append(currentCombo, *t)
@@ -1527,8 +1577,13 @@ func checkGameEnd() bool {
 
 		fyne.Do(func() {
 			if isWin {
-				SetStatus(grummi.T("msg_win", currentPlayer.Name))
-				showGameOverDialog(grummi.T("msg_win", currentPlayer.Name), currentPlayer.ID)
+				msgKey := "msg_win_human"
+				if currentPlayer.IsAI {
+					msgKey = "msg_win_ai"
+				}
+				winMsg := grummi.T(msgKey, currentPlayer.Name)
+				SetStatus(winMsg)
+				showGameOverDialog(winMsg, currentPlayer.ID)
 			} else {
 				SetStatus(grummi.T("msg_stalemate"))
 				showGameOverDialog(grummi.T("msg_stalemate"), -1)
@@ -1584,7 +1639,18 @@ func showGameOverDialog(message string, winnerID int) {
 		widget.NewLabel(handDetails),
 	)
 
-	dialog.ShowCustom("Game Over", "OK", content, myWindow)
+	dialog.ShowCustomConfirm(
+		grummi.T("game_over"),
+		grummi.T("menu_new_game"),
+		"OK",
+		content,
+		func(confirmed bool) {
+			if confirmed {
+				showNewGameDialog(myWindow, onNewGame)
+			}
+		},
+		myWindow,
+	)
 }
 
 // ****************************************************************************
@@ -1650,6 +1716,7 @@ func togglePause() {
 		gameTable.Hide()
 		playerRack.Hide()
 		pauseBtn.SetIcon(theme.MediaPlayIcon())
+		pauseBtn.tooltip = grummi.T("btn_resume")
 
 		confirmBtn.Disable()
 		sortBtn.Disable()
@@ -1661,6 +1728,7 @@ func togglePause() {
 		gameTable.Show()
 		playerRack.Show()
 		pauseBtn.SetIcon(theme.MediaPauseIcon())
+		pauseBtn.tooltip = grummi.T("btn_pause")
 
 		confirmBtn.Enable()
 		sortBtn.Enable()

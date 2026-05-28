@@ -112,7 +112,11 @@ func main() {
 
 		// Check if the player won
 		if len(player.Hand) == 0 {
-			fmt.Printf("\n" + T("msg_win", player.Name) + "\n")
+			msgKey := "msg_win_human"
+			if player.IsAI {
+				msgKey = "msg_win_ai"
+			}
+			fmt.Printf("\n" + T(msgKey, player.Name) + "\n")
 			game.PrintFinalScores(player.ID)
 			game.PrintFinalHands()
 			break
