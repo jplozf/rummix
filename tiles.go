@@ -335,6 +335,8 @@ func handleDrop(absPos fyne.Position, src *DragTile) bool {
 			setTileAt(src.grid, src.index, targetTile.Value, targetTile.Color)
 		}
 
+		updateStatusTiles()
+
 		return true
 	}
 	return false

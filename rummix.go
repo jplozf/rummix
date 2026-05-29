@@ -80,6 +80,8 @@ var statusLabel *widget.Label
 var statusDrawLabel *widget.Label
 var statusTimerLabel *canvas.Text
 var statusLimitLabel *canvas.Text
+var currentPlayerTitle *canvas.Text
+var currentPlayerNameLabel *canvas.Text // Added to display current turn's player name
 var statusOpeningPointsLabel *canvas.Text
 var timerStop chan bool // Channel to stop the human player's timer
 
@@ -88,6 +90,7 @@ var statsPlayerLabels []*widget.Label
 var statsWinsLabels []*widget.Label
 var statsGamesLabels []*widget.Label
 var statsPointsLabels []*widget.Label
+var statsWinPercentageLabels []*widget.Label // New variable for win percentage
 var statusTiles []*widget.Label
 var gameState grummi.GameState
 var myApp fyne.App
@@ -103,10 +106,11 @@ var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
 
 // playerStats is a helper struct to hold player statistics for sorting.
 type playerStats struct {
-	Name  string
-	Wins  int
-	Games int
-	Score int
+	Name          string
+	Wins          int     // Number of games won
+	Games         int     // Number of games played
+	Score         int     // Total score
+	WinPercentage float64 // Percentage of games won
 }
 
 // stripANSI removes ANSI escape sequences (like colors) from a string.
@@ -224,7 +228,7 @@ func main() {
 	aiLogEntry = widget.NewLabel("")
 	aiLogEntry.Wrapping = fyne.TextWrapWord
 	aiLogScroll = container.NewScroll(aiLogEntry)
-	aiLogScroll.SetMinSize(fyne.NewSize(250, 156)) // Match the player rack height
+	aiLogScroll.SetMinSize(fyne.NewSize(180, 156)) // Match the new narrower panel width
 
 	playerRack = container.New(layout.NewGridLayoutWithColumns(20))
 	for i := range 80 { // 4 rows * 20 columns
@@ -294,10 +298,20 @@ func main() {
 	rummixLogo.FillMode = canvas.ImageFillContain
 	rummixLogo.SetMinSize(fyne.NewSize(100, 100))
 
-	logoSpacer := canvas.NewRectangle(color.Transparent)
-	logoSpacer.SetMinSize(fyne.NewSize(140, 156))
-	logoRightContainer := container.NewStack(logoSpacer, container.NewCenter(rummixLogo))
+	currentPlayerTitle = canvas.NewText(grummi.T("label_current_player"), theme.ForegroundColor())
+	currentPlayerTitle.Alignment = fyne.TextAlignCenter
+	currentPlayerTitle.TextSize = 12
 
+	currentPlayerNameLabel = canvas.NewText("", theme.ForegroundColor())
+	currentPlayerNameLabel.Alignment = fyne.TextAlignCenter
+	currentPlayerNameLabel.TextStyle = fyne.TextStyle{Bold: true}
+	currentPlayerNameLabel.TextSize = 28 // Make the text bigger
+
+	logoSpacer := canvas.NewRectangle(color.Transparent)
+	logoSpacer.SetMinSize(fyne.NewSize(300, 156))
+
+	logoAndName := container.NewBorder(nil, nil, container.NewCenter(rummixLogo), nil, container.NewCenter(container.NewVBox(currentPlayerTitle, currentPlayerNameLabel)))
+	logoRightContainer := container.NewStack(logoSpacer, logoAndName)
 	rackAndButtonsContainer := container.NewHBox(
 		gapBetweenRackAndButtons,
 		fixedRack,
@@ -337,11 +351,13 @@ func main() {
 	statsWinsLabels = make([]*widget.Label, 4)
 	statsGamesLabels = make([]*widget.Label, 4)
 	statsPointsLabels = make([]*widget.Label, 4)
+	statsWinPercentageLabels = make([]*widget.Label, 4)
 	for i := range 4 {
 		statsPlayerLabels[i] = widget.NewLabelWithStyle("-", fyne.TextAlignLeading, fyne.TextStyle{})
 		statsWinsLabels[i] = widget.NewLabelWithStyle("-", fyne.TextAlignTrailing, fyne.TextStyle{})
 		statsGamesLabels[i] = widget.NewLabelWithStyle("-", fyne.TextAlignTrailing, fyne.TextStyle{})
 		statsPointsLabels[i] = widget.NewLabelWithStyle("-", fyne.TextAlignTrailing, fyne.TextStyle{})
+		statsWinPercentageLabels[i] = widget.NewLabelWithStyle("-", fyne.TextAlignTrailing, fyne.TextStyle{})
 	}
 
 	statusTiles = make([]*widget.Label, 4)
@@ -365,20 +381,26 @@ func main() {
 		handsGrid.Add(shrink(statusTiles[i], 40))
 	}
 
-	// New statsGrid using GridLayoutWithColumns for a table-like display
-	statsGrid := container.New(layout.NewGridLayoutWithColumns(4))
-	// Add headers for the stats table
-	statsGrid.Add(shrink(widget.NewLabelWithStyle(grummi.T("column_player"), fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), 60))
-	statsGrid.Add(shrink(widget.NewLabelWithStyle(grummi.T("column_wins"), fyne.TextAlignTrailing, fyne.TextStyle{Bold: true}), 25))
-	statsGrid.Add(shrink(widget.NewLabelWithStyle(grummi.T("column_games"), fyne.TextAlignTrailing, fyne.TextStyle{Bold: true}), 25))
-	statsGrid.Add(shrink(widget.NewLabelWithStyle(grummi.T("column_score"), fyne.TextAlignTrailing, fyne.TextStyle{Bold: true}), 30))
+	// New statsGrid using a VBox of HBoxes to allow varying column widths and a narrower table
+	statsGrid := container.NewVBox(
+		container.NewHBox(
+			shrink(widget.NewLabelWithStyle(grummi.T("column_player"), fyne.TextAlignLeading, fyne.TextStyle{Bold: true}), 65),
+			shrink(widget.NewLabelWithStyle(grummi.T("column_wins"), fyne.TextAlignTrailing, fyne.TextStyle{Bold: true}), 20),
+			shrink(widget.NewLabelWithStyle(grummi.T("column_games"), fyne.TextAlignTrailing, fyne.TextStyle{Bold: true}), 20),
+			shrink(widget.NewLabelWithStyle(grummi.T("column_win_percentage"), fyne.TextAlignTrailing, fyne.TextStyle{Bold: true}), 35),
+			shrink(widget.NewLabelWithStyle(grummi.T("column_score"), fyne.TextAlignTrailing, fyne.TextStyle{Bold: true}), 40),
+		),
+	)
 
-	// Add player stat labels to the grid
+	// Add player stat labels to the rows
 	for i := 0; i < 4; i++ {
-		statsGrid.Add(shrink(statsPlayerLabels[i], 60))
-		statsGrid.Add(shrink(statsWinsLabels[i], 25))
-		statsGrid.Add(shrink(statsGamesLabels[i], 25))
-		statsGrid.Add(shrink(statsPointsLabels[i], 30))
+		statsGrid.Add(container.NewHBox(
+			shrink(statsPlayerLabels[i], 65),
+			shrink(statsWinsLabels[i], 20),
+			shrink(statsGamesLabels[i], 20),
+			shrink(statsWinPercentageLabels[i], 35),
+			shrink(statsPointsLabels[i], 40),
+		))
 	}
 
 	// Dissociate components using sections with headers and separators
@@ -390,7 +412,7 @@ func main() {
 		layout.NewSpacer(),
 		widget.NewSeparator(),
 		container.NewCenter(shrink(widget.NewLabelWithStyle(grummi.T("label_stats_section"), fyne.TextAlignCenter, fyne.TextStyle{Bold: true, Italic: true}), 140)),
-		statsGrid,
+		container.NewCenter(statsGrid),
 	)
 
 	statusTitle := widget.NewLabelWithStyle(grummi.T("section_status"), fyne.TextAlignCenter, fyne.TextStyle{Bold: true})
@@ -415,7 +437,7 @@ func main() {
 	// Define a 3-column layout to ensure vertical alignment of side elements
 	// Left Column: Status top, AI Log bottom
 	leftTopSpacer := canvas.NewRectangle(color.Transparent)
-	leftTopSpacer.SetMinSize(fyne.NewSize(250, 416)) // Match table height (8 rows * 52px)
+	leftTopSpacer.SetMinSize(fyne.NewSize(180, 416)) // Match table height (8 rows * 52px)
 	vGapLeft := canvas.NewRectangle(color.Transparent)
 	vGapLeft.SetMinSize(fyne.NewSize(0, 20)) // 20px space
 	leftColumn := container.NewBorder(container.NewVBox(container.NewStack(leftTopSpacer, statusArea), vGapLeft), nil, nil, nil, aiLogScroll)
@@ -426,7 +448,7 @@ func main() {
 	centerColumn := container.NewVBox(fixedTable, vGapCenter, rackAndButtonsContainer)
 
 	// Assemble rows horizontally and center the whole board
-	gameBoard := container.NewHBox(gapBetweenRackAndButtons, leftColumn, gapBetweenRackAndButtons, centerColumn, gapBetweenRackAndButtons)
+	gameBoard := container.NewHBox(leftColumn, gapBetweenRackAndButtons, centerColumn, gapBetweenRackAndButtons)
 	mainInterface := container.NewBorder(nil, statusMsg, nil, nil, container.NewCenter(gameBoard))
 
 	windowContent := container.NewStack(background, mainInterface)
@@ -435,7 +457,10 @@ func main() {
 	// Let's show the window and run the app
 	updateBackgroundColor()
 	myWindow.SetContent(finalStack)
-	myWindow.Resize(fyne.NewSize(1400, 700))
+
+	w := myApp.Preferences().FloatWithFallback("WindowWidth", 1400)
+	h := myApp.Preferences().FloatWithFallback("WindowHeight", 700)
+	myWindow.Resize(fyne.NewSize(float32(w), float32(h)))
 
 	SetStatus(grummi.T("status_welcome"))
 	showNewGameDialog(myWindow, onNewGame)
@@ -463,6 +488,10 @@ func updateBackgroundColor() {
 	if statusOpeningPointsLabel != nil {
 		statusOpeningPointsLabel.Color = theme.ForegroundColor()
 		statusOpeningPointsLabel.Refresh()
+	}
+	if currentPlayerTitle != nil {
+		currentPlayerTitle.Color = theme.ForegroundColor()
+		currentPlayerTitle.Refresh()
 	}
 	// The new stats labels will automatically pick up the theme's text color.
 	// statusNames are still used for the hands grid, and their color is set in updateStatusTiles.
@@ -676,8 +705,8 @@ func animateTileIn(tile grummi.Tile, targetCell *fyne.Container, playerID int, i
 
 	// These are the calculated minimum sizes for the gameBoard based on its children's minimum sizes.
 	// Since gameBoard is centered, these are effectively its rendered dimensions.
-	// gameBoardWidth = 10 (gap) + 250 (leftColumn) + 10 (gap) + 1120 (centerColumn) + 10 (gap) = 1400
-	const gameBoardRenderedWidth = 1400.0
+	// gameBoardWidth = 10 (gap) + 180 (leftColumn) + 10 (gap) + 1120 (centerColumn) + 10 (gap) = 1330
+	const gameBoardRenderedWidth = 1330.0
 	// gameBoardHeight = max(leftColumn.Height (592), centerColumn.Height (594)) = 594
 	const gameBoardRenderedHeight = 594.0
 
@@ -686,8 +715,8 @@ func animateTileIn(tile grummi.Tile, targetCell *fyne.Container, playerID int, i
 	gameBoardOffsetY := (winSize.Height - statusMsgHeight - gameBoardRenderedHeight) / 2
 
 	// The gameTable is located within the centerColumn, which is offset within the gameBoard HBox.
-	// gameBoard HBox children: gap (10), leftColumn (250), gap (10), centerColumn (table starts here)
-	tableGlobalOffsetX := gameBoardOffsetX + float32(10) + float32(250) + float32(10)
+	// gameBoard HBox children: gap (10), leftColumn (180), gap (10), centerColumn (table starts here)
+	tableGlobalOffsetX := gameBoardOffsetX + float32(10) + float32(180) + float32(10)
 	tableGlobalOffsetY := gameBoardOffsetY // centerColumn is aligned to the top of gameBoard
 
 	finalPos := fyne.NewPos(tableGlobalOffsetX+float32(idx%28)*boardCellSize.Width, tableGlobalOffsetY+float32(idx/28)*boardCellSize.Height)
@@ -738,14 +767,14 @@ func animateTileToRack(tile grummi.Tile, targetCell *fyne.Container, idx int) {
 	winSize := myWindow.Content().Size()
 	statusMsgHeight := statusMsg.MinSize().Height
 
-	const gameBoardRenderedWidth = 1400.0
+	const gameBoardRenderedWidth = 1330.0
 	const gameBoardRenderedHeight = 594.0
 
 	gameBoardOffsetX := (winSize.Width - gameBoardRenderedWidth) / 2
 	gameBoardOffsetY := (winSize.Height - statusMsgHeight - gameBoardRenderedHeight) / 2
 
 	// Calculate centerColumn's top-left position within the window content area
-	centerColumnGlobalOffsetX := gameBoardOffsetX + float32(10) + float32(250) + float32(10)
+	centerColumnGlobalOffsetX := gameBoardOffsetX + float32(10) + float32(180) + float32(10)
 	centerColumnGlobalOffsetY := gameBoardOffsetY
 
 	// rackAndButtonsContainer is the 3rd child of centerColumn (index 2)
@@ -1165,6 +1194,9 @@ func confirmExit() {
 	SetStatus(grummi.T("dialog_confirm_title"))
 	d := dialog.NewConfirm(grummi.T("dialog_confirm_title"), grummi.T("dialog_confirm_quit"), func(confirm bool) {
 		if confirm {
+			size := myWindow.Content().Size()
+			myApp.Preferences().SetFloat("WindowWidth", float64(size.Width))
+			myApp.Preferences().SetFloat("WindowHeight", float64(size.Height))
 			myApp.Quit()
 		}
 	}, myWindow)
@@ -1213,6 +1245,42 @@ func updateStatusTiles() {
 	if len(gameState.Players) > 0 {
 		statusLabel.SetText(fmt.Sprintf("%d", gameState.TurnNumber)) // Display turn number
 		statusDrawLabel.SetText(fmt.Sprintf("%d", len(gameState.Remaining)))
+
+		// Update the current player name next to the logo
+		currentPlayer := gameState.Players[gameState.CurrentPlayerID]
+		currentPlayerTitle.Text = grummi.T("label_current_player")
+		currentPlayerTitle.Refresh()
+
+		currentPlayerNameLabel.Text = currentPlayer.Name
+		if currentPlayer.HasPlayedFirst {
+			currentPlayerNameLabel.Color = ColorRummyGreen
+		} else {
+			currentPlayerNameLabel.Color = ColorRummyRed
+		}
+		currentPlayerNameLabel.Refresh()
+
+		// Update Opening Points progress for the human player
+		if !gameState.Players[0].HasPlayedFirst && gameState.CurrentPlayerID == 0 {
+			newTable := [][]grummi.Tile{}
+			var currentCombo []grummi.Tile
+			const cols = 28
+			for i := 0; i < 224; i++ {
+				t := getTileAtCell(gameTable, i)
+				if t != nil {
+					currentCombo = append(currentCombo, *t)
+				}
+				isEndOfRow := (i+1)%cols == 0
+				if (t == nil || isEndOfRow) && len(currentCombo) > 0 {
+					newTable = append(newTable, currentCombo)
+					currentCombo = nil
+				}
+			}
+			playedPoints := calculateTableValue(newTable) - calculateTableValue(gameState.Table)
+			statusOpeningPointsLabel.Text = fmt.Sprintf("%s %d (%d)", grummi.T("label_opening_points"), gameState.RequiredOpeningPoints, playedPoints)
+		} else {
+			statusOpeningPointsLabel.Text = grummi.T("label_opening_points") + " " + fmt.Sprintf("%d", gameState.RequiredOpeningPoints)
+		}
+		statusOpeningPointsLabel.Refresh()
 	}
 
 	for i := 0; i < 4; i++ {
@@ -1240,11 +1308,19 @@ func updateStatusTiles() {
 		wins := myApp.Preferences().Int(fmt.Sprintf("Stats_%s_Wins", p.Name))
 		games := myApp.Preferences().Int(fmt.Sprintf("Stats_%s_Games", p.Name))
 		score := myApp.Preferences().Int(fmt.Sprintf("Stats_%s_Score", p.Name))
+
+		var winPercentage float64
+		if games > 0 {
+			winPercentage = (float64(wins) / float64(games)) * 100
+		} else {
+			winPercentage = 0.0
+		}
 		currentStats = append(currentStats, playerStats{
-			Name:  p.Name,
-			Wins:  wins,
-			Games: games,
-			Score: score,
+			Name:          p.Name,
+			Wins:          wins,
+			Games:         games,
+			Score:         score,
+			WinPercentage: winPercentage, // Populate new field
 		})
 	}
 
@@ -1259,17 +1335,20 @@ func updateStatusTiles() {
 			statsPlayerLabels[i].SetText(currentStats[i].Name)
 			statsWinsLabels[i].SetText(fmt.Sprintf("%d", currentStats[i].Wins))
 			statsGamesLabels[i].SetText(fmt.Sprintf("%d", currentStats[i].Games))
+			statsWinPercentageLabels[i].SetText(fmt.Sprintf("%.0f%%", currentStats[i].WinPercentage)) // Update new label
 			statsPointsLabels[i].SetText(fmt.Sprintf("%d", currentStats[i].Score))
 		} else {
 			// Clear unused rows
 			statsPlayerLabels[i].SetText("-")
 			statsWinsLabels[i].SetText("-")
 			statsGamesLabels[i].SetText("-")
+			statsWinPercentageLabels[i].SetText("-") // Clear new label
 			statsPointsLabels[i].SetText("-")
 		}
 		statsPlayerLabels[i].Refresh()
 		statsWinsLabels[i].Refresh()
 		statsGamesLabels[i].Refresh()
+		statsWinPercentageLabels[i].Refresh() // Refresh new label
 		statsPointsLabels[i].Refresh()
 	}
 }
